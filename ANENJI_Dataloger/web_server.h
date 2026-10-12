@@ -27,6 +27,7 @@ struct WebHistoryHour{
   uint8_t month,day,hour;
   float gridKwh,pvKwh,loadKwh;
   float batteryChargeKwh,batteryDischargeKwh;
+  bool hasData;
 };
 
 struct WebSettings{
@@ -394,31 +395,54 @@ function axes(ctx,w,h,max,yUnit,ticks){
  ctx.textAlign='center';ctx.fillText(yUnit,0,0);ctx.restore();
  return {left,right,top,bottom};
 }
+function timeAxisRange(points,width){
+ const minutes=points.map(p=>Number(p.minute))
+  .filter(m=>Number.isFinite(m)&&m>=0&&m<=1440);
+ if(!minutes.length)return {start:0,end:1440,step:width<550?240:120};
+ let first=Math.min(...minutes),last=Math.max(...minutes);
+ if(first===last){first=Math.max(0,first-5);last=Math.min(1440,last+5)}
+ const target=Math.max(2,Math.floor((width-68)/75));
+ const choices=[1,2,5,10,15,30,60,120,180,240,360,720];
+ const step=choices.find(n=>n>=(last-first)/target)||720;
+ const start=Math.max(0,Math.floor(first/step)*step);
+ const end=Math.min(1440,Math.ceil(last/step)*step);
+ return {start,end:Math.max(start+step,end),step};
+}
 function dayChart(){
  const {ctx,w,h}=prepare('dayChart');
  const active=series.filter(s=>$(s.day).checked);
+ const points=samples.filter(p=>Number.isFinite(Number(p.minute))&&
+   Number(p.minute)>=0&&Number(p.minute)<=1440)
+   .slice().sort((a,b)=>Number(a.minute)-Number(b.minute));
  let peak=0;
- for(const p of samples)for(const s of active)
+ for(const p of points)for(const s of active)
   peak=Math.max(peak,Number(p[s.key])||0);
  const ticks=Math.max(1,Math.ceil(peak/200));
  const max=ticks*.2;
  const a=axes(ctx,w,h,max,t('kw'),ticks);
+ const range=timeAxisRange(points,w);
+ const xAt=minute=>a.left+(a.right-a.left)*
+   (Number(minute)-range.start)/(range.end-range.start);
  ctx.textAlign='center';ctx.textBaseline='top';ctx.fillStyle='#516176';
- for(let hour=0;hour<=24;hour+=w<550?4:2){
-  const x=a.left+(a.right-a.left)*hour/24;
-  ctx.fillText(pad(hour)+':00',x,a.bottom+8);
+ for(let minute=range.start;minute<=range.end;minute+=range.step){
+  ctx.fillText(pad(Math.floor(minute/60))+':'+pad(minute%60),
+    xAt(minute),a.bottom+8);
  }
  for(const s of active){
   ctx.strokeStyle=css(s.color);ctx.lineWidth=2;ctx.beginPath();
   let started=false;
-  for(const p of samples){
-   const x=a.left+(a.right-a.left)*Number(p.minute)/1440;
-   const y=a.bottom-(a.bottom-a.top)*
-     Number(p[s.key]||0)/(max*1000);
+  for(const p of points){
+   const x=xAt(p.minute);
+   const y=a.bottom-(a.bottom-a.top)*Number(p[s.key]||0)/(max*1000);
    if(!started){ctx.moveTo(x,y);started=true}
    else ctx.lineTo(x,y);
   }
   if(started)ctx.stroke();
+  if(points.length===1){
+   ctx.fillStyle=css(s.color);ctx.beginPath();
+   ctx.arc(xAt(points[0].minute),a.bottom-(a.bottom-a.top)*
+     Number(points[0][s.key]||0)/(max*1000),3,0,Math.PI*2);ctx.fill();
+  }
  }
 }
 function periodLength(){
@@ -439,8 +463,8 @@ function periodText(){
 function columns(){
  const count=periodLength();
  const out=Array.from({length:count},()=>({
-  grid:0,pv:0,load:0,charge:0,discharge:0
- }));
+  grid:0,pv:0,load:0,charge:0,discharge:0,hasData:false,index:0
+ })).map((p,index)=>({...p,index}));
  for(const p of hours){
   const y=Number(p.year),m=Number(p.month),d=Number(p.day);
   let index=-1;
@@ -451,11 +475,20 @@ function columns(){
      m===selected.month)index=d-1;
   if(scale==='month'&&y===selected.year)index=m-1;
   if(scale==='year'&&y===selected.year)index=0;
-  if(index>=0&&index<count)
-   for(const s of series)
-    out[index][s.key]+=Number(p[s.key])||0;
+  if(index>=0&&index<count){
+   out[index].hasData=out[index].hasData||p.hasData===true||
+     (p.hasData===undefined&&series.some(s=>Number(p[s.key])!==0&&Number.isFinite(Number(p[s.key]))));
+   for(const s of series)out[index][s.key]+=Number(p[s.key])||0;
+  }
  }
  return out;
+}
+function historyAxisColumns(data){
+ const first=data.findIndex(p=>p.hasData);
+ if(first<0)return data;
+ let last=data.length-1;
+ while(last>first&&!data[last].hasData)--last;
+ return data.slice(first,last+1);
 }
 function historyChart(){
  const {ctx,w,h}=prepare('historyChart');
@@ -463,7 +496,7 @@ function historyChart(){
  document.querySelectorAll('[data-scale]').forEach(
   b=>b.classList.toggle('active',b.dataset.scale===scale));
  if(!selected.year){axes(ctx,w,h,1,t('kwh'),5);return}
- const data=columns(),active=series.filter(s=>$(s.hist).checked);
+ const data=historyAxisColumns(columns()),active=series.filter(s=>$(s.hist).checked);
  let peak=0;
  for(const p of data)
   for(const s of active)peak=Math.max(peak,p[s.key]);
@@ -483,13 +516,13 @@ function historyChart(){
  });
  ctx.fillStyle='#516176';ctx.font='11px Arial';
  ctx.textAlign='center';ctx.textBaseline='top';
- const every=scale==='hour'?(w<650?4:2):
-   scale==='day'?(w<650?5:2):1;
+ const every=Math.max(1,Math.ceil(data.length/Math.max(2,Math.floor((w-68)/65))));
  data.forEach((p,i)=>{
   if(i%every&&i!==data.length-1)return;
-  let label=scale==='hour'?pad(i)+':00':
-    scale==='day'?String(i+1):
-    scale==='month'?pad(i+1):String(selected.year);
+  const index=p.index;
+  let label=scale==='hour'?pad(index)+':00':
+    scale==='day'?String(index+1):
+    scale==='month'?pad(index+1):String(selected.year);
   ctx.fillText(label,a.left+(i+.5)*gw,a.bottom+8);
  });
 }
@@ -649,7 +682,8 @@ json('/api/interval').then(d=>
 String webHistoryJson(const WebHistoryHour& p){
   String j;
   j.reserve(180);
-  j+=F("{\"year\":");j+=String(p.year);
+  j+=F("{\"hasData\":");j+=p.hasData?F("true"):F("false");
+  j+=F(",\"year\":");j+=String(p.year);
   j+=F(",\"month\":");j+=String(p.month);
   j+=F(",\"day\":");j+=String(p.day);
   j+=F(",\"hour\":");j+=String(p.hour);
