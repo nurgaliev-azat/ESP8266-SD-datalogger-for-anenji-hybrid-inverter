@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="820" viewBox="0 0 1200 820" role="img" aria-labelledby="title desc">
+<title id="title">Wemos D1 mini — Micro SD Shield: схема подключения</title>
+<desc id="desc">3V3 к 3V3, GND к GND, D4 GPIO2 к CS, D5 GPIO14 к CLK, D6 GPIO12 к MISO, D7 GPIO13 к MOSI. Для старого shield версии 1.0 CS может быть D8.</desc>
+<rect width="1200" height="820" fill="#f3f6fb"/>
+<text x="55" y="55" font-family="DejaVu Sans,Arial,sans-serif" font-size="34" fill="#17253e" font-weight="700" text-anchor="start">Wemos D1 mini + Micro SD Shield</text>
+<text x="55" y="90" font-family="DejaVu Sans,Arial,sans-serif" font-size="20" fill="#51637c" font-weight="400" text-anchor="start">Подключение по прошивке ANENJI_Dataloger • SPI • логика 3,3 В</text>
+<rect x="55" y="125" width="365" height="455" rx="22" fill="#0f718a" stroke="none"/>
+<rect x="780" y="125" width="365" height="455" rx="22" fill="#176e63" stroke="none"/>
+<text x="80" y="170" font-family="DejaVu Sans,Arial,sans-serif" font-size="26" fill="white" font-weight="700" text-anchor="start">Wemos D1 mini</text>
+<text x="80" y="198" font-family="DejaVu Sans,Arial,sans-serif" font-size="18" fill="#d8f3fa" font-weight="400" text-anchor="start">ESP8266</text>
+<text x="805" y="170" font-family="DejaVu Sans,Arial,sans-serif" font-size="26" fill="white" font-weight="700" text-anchor="start">Micro SD Shield</text>
+<text x="805" y="198" font-family="DejaVu Sans,Arial,sans-serif" font-size="17" fill="#d6f7eb" font-weight="400" text-anchor="start">LOLIN v1.2 / CS выбран D4</text>
+<rect x="80" y="228" width="98" height="188" rx="10" fill="#c4d0d9" stroke="none"/>
+<text x="129" y="300" font-family="DejaVu Sans,Arial,sans-serif" font-size="22" fill="#344357" font-weight="700" text-anchor="middle">ESP</text>
+<text x="129" y="332" font-family="DejaVu Sans,Arial,sans-serif" font-size="22" fill="#344357" font-weight="700" text-anchor="middle">8266</text>
+<rect x="1020" y="230" width="98" height="188" rx="8" fill="#c4d0d9" stroke="none"/>
+<rect x="1034" y="251" width="70" height="94" rx="6" fill="#273449" stroke="none"/>
+<text x="1069" y="284" font-family="DejaVu Sans,Arial,sans-serif" font-size="14" fill="white" font-weight="400" text-anchor="middle">micro</text>
+<text x="1069" y="308" font-family="DejaVu Sans,Arial,sans-serif" font-size="22" fill="white" font-weight="700" text-anchor="middle">SD</text>
+<text x="394" y="257" font-family="DejaVu Sans,Arial,sans-serif" font-size="18" fill="white" font-weight="700" text-anchor="end">3V3</text>
+<text x="805" y="257" font-family="DejaVu Sans,Arial,sans-serif" font-size="18" fill="white" font-weight="700" text-anchor="start">3V3</text>
+<path d="M420 250 H780" stroke="#df364a" stroke-width="5" fill="none"/>
+<circle cx="420" cy="250" r="7" fill="white" stroke="#df364a" stroke-width="3"/>
+<circle cx="780" cy="250" r="7" fill="white" stroke="#df364a" stroke-width="3"/>
+<rect x="460" y="216" width="280" height="25" rx="5" fill="#f3f6fb" stroke="none"/>
+<text x="600" y="235" font-family="DejaVu Sans,Arial,sans-serif" font-size="16" fill="#df364a" font-weight="600" text-anchor="middle">Питание 3,3 В</text>
+<text x="394" y="310" font-family="DejaVu Sans,Arial,sans-serif" font-size="18" fill="white" font-weight="700" text-anchor="end">GND</text>
+<text x="805" y="310" font-family="DejaVu Sans,Arial,sans-serif" font-size="18" fill="white" font-weight="700" text-anchor="start">GND</text>
+<path d="M420 303 H780" stroke="#334155" stroke-width="5" fill="none"/>
+<circle cx="420" cy="303" r="7" fill="white" stroke="#334155" stroke-width="3"/>
+<circle cx="780" cy="303" r="7" fill="white" stroke="#334155" stroke-width="3"/>
+<rect x="460" y="269" width="280" height="25" rx="5" fill="#f3f6fb" stroke="none"/>
+<text x="600" y="288" font-family="DejaVu Sans,Arial,sans-serif" font-size="16" fill="#334155" font-weight="600" text-anchor="middle">Общий провод</text>
+<text x="394" y="363" font-family="DejaVu Sans,Arial,sans-serif" font-size="18" fill="white" font-weight="700" text-anchor="end">D4 · GPIO2</text>
+<text x="805" y="363" font-family="DejaVu Sans,Arial,sans-serif" font-size="18" fill="white" font-weight="700" text-anchor="start">CS</text>
+<path d="M420 356 H780" stroke="#9b51c7" stroke-width="5" fill="none"/>
+<circle cx="420" cy="356" r="7" fill="white" stroke="#9b51c7" stroke-width="3"/>
+<circle cx="780" cy="356" r="7" fill="white" stroke="#9b51c7" stroke-width="3"/>
+<rect x="460" y="322" width="280" height="25" rx="5" fill="#f3f6fb" stroke="none"/>
+<text x="600" y="341" font-family="DejaVu Sans,Arial,sans-serif" font-size="16" fill="#9b51c7" font-weight="600" text-anchor="middle">Выбор карты</text>
+<text x="394" y="416" font-family="DejaVu Sans,Arial,sans-serif" font-size="18" fill="white" font-weight="700" text-anchor="end">D5 · GPIO14</text>
+<text x="805" y="416" font-family="DejaVu Sans,Arial,sans-serif" font-size="18" fill="white" font-weight="700" text-anchor="start">CLK / SCK</text>
+<path d="M420 409 H780" stroke="#d18a00" stroke-width="5" fill="none"/>
+<circle cx="420" cy="409" r="7" fill="white" stroke="#d18a00" stroke-width="3"/>
+<circle cx="780" cy="409" r="7" fill="white" stroke="#d18a00" stroke-width="3"/>
+<rect x="460" y="375" width="280" height="25" rx="5" fill="#f3f6fb" stroke="none"/>
+<text x="600" y="394" font-family="DejaVu Sans,Arial,sans-serif" font-size="16" fill="#d18a00" font-weight="600" text-anchor="middle">Тактовый сигнал</text>
+<text x="394" y="469" font-family="DejaVu Sans,Arial,sans-serif" font-size="18" fill="white" font-weight="700" text-anchor="end">D6 · GPIO12</text>
+<text x="805" y="469" font-family="DejaVu Sans,Arial,sans-serif" font-size="18" fill="white" font-weight="700" text-anchor="start">MISO / DO</text>
+<path d="M420 462 H780" stroke="#188447" stroke-width="5" fill="none"/>
+<circle cx="420" cy="462" r="7" fill="white" stroke="#188447" stroke-width="3"/>
+<circle cx="780" cy="462" r="7" fill="white" stroke="#188447" stroke-width="3"/>
+<rect x="460" y="428" width="280" height="25" rx="5" fill="#f3f6fb" stroke="none"/>
+<text x="600" y="447" font-family="DejaVu Sans,Arial,sans-serif" font-size="16" fill="#188447" font-weight="600" text-anchor="middle">Карта → ESP8266</text>
+<text x="394" y="522" font-family="DejaVu Sans,Arial,sans-serif" font-size="18" fill="white" font-weight="700" text-anchor="end">D7 · GPIO13</text>
+<text x="805" y="522" font-family="DejaVu Sans,Arial,sans-serif" font-size="18" fill="white" font-weight="700" text-anchor="start">MOSI / DI</text>
+<path d="M420 515 H780" stroke="#247bcc" stroke-width="5" fill="none"/>
+<circle cx="420" cy="515" r="7" fill="white" stroke="#247bcc" stroke-width="3"/>
+<circle cx="780" cy="515" r="7" fill="white" stroke="#247bcc" stroke-width="3"/>
+<rect x="460" y="481" width="280" height="25" rx="5" fill="#f3f6fb" stroke="none"/>
+<text x="600" y="500" font-family="DejaVu Sans,Arial,sans-serif" font-size="16" fill="#247bcc" font-weight="600" text-anchor="middle">ESP8266 → карта</text>
+<text x="80" y="556" font-family="DejaVu Sans,Arial,sans-serif" font-size="17" fill="#d8f3fa" font-weight="400" text-anchor="start">USB → питание D1 mini</text>
+<text x="805" y="556" font-family="DejaVu Sans,Arial,sans-serif" font-size="17" fill="#d6f7eb" font-weight="400" text-anchor="start">Карта: FAT16 / FAT32</text>
+<rect x="55" y="604" width="1090" height="157" rx="16" fill="white" stroke="none"/>
+<text x="80" y="637" font-family="DejaVu Sans,Arial,sans-serif" font-size="21" fill="#17253e" font-weight="700" text-anchor="start">Как соединить</text>
+<text x="80" y="666" font-family="DejaVu Sans,Arial,sans-serif" font-size="18" fill="#17253e" font-weight="400" text-anchor="start">Shield можно установить на разъёмы D1 mini: совместите обозначения 3V3, G и D5–D7.</text>
+<text x="80" y="694" font-family="DejaVu Sans,Arial,sans-serif" font-size="18" fill="#17253e" font-weight="400" text-anchor="start">У старого shield v1.0 CS = D8: измените SD_CS_PIN на D8 или выберите CS = D4 на shield.</text>
+<text x="80" y="722" font-family="DejaVu Sans,Arial,sans-serif" font-size="18" fill="#17253e" font-weight="400" text-anchor="start">GPIO2 (D4) должен быть HIGH при старте. На сигнальные выводы нельзя подавать 5 В.</text>
+<text x="55" y="795" font-family="DejaVu Sans,Arial,sans-serif" font-size="17" fill="#51637c" font-weight="400" text-anchor="start">Показаны электрические связи; расположение выводов условное. Сверяйте маркировку своей платы.</text>
+</svg>
