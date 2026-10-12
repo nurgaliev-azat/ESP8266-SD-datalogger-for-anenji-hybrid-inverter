@@ -19,6 +19,27 @@ ESP8266-based SD card datalogger for ANENJI hybrid solar inverters with Modbus m
 
 По умолчанию: IP инвертора `192.168.0.148`, опрос 30 секунд, обновление страницы 5 секунд, UTC+5. Wi-Fi работает на 2,4 ГГц. Для корректной истории необходима синхронизация NTP (`pool.ntp.org`, `time.nist.gov`).
 
+## Схема подключения SD Card Shield
+
+![Схема Wemos D1 mini и Micro SD Shield](docs/wemos-d1-mini-sd-wiring.svg)
+
+Схема соответствует `SD_CS_PIN=D4` в прошивке. Положение выводов на рисунке условное: подключайте по обозначениям на платах.
+
+| Wemos D1 mini | GPIO | Micro SD Shield |
+| --- | --- | --- |
+| 3V3 | — | 3V3 |
+| G / GND | — | G / GND |
+| D4 | 2 | CS |
+| D5 | 14 | CLK / SCK |
+| D6 | 12 | MISO / DO |
+| D7 | 13 | MOSI / DI |
+
+При установке shield на разъёмы D1 mini совместите маркировку питания и выводов. Для LOLIN Micro SD Shield v1.2 по умолчанию используется CS=D4. Старый Wemos Micro SD Shield v1.0 использует CS=D8: для него задайте `SD_CS_PIN=D8` в скетче; если ваша плата позволяет выбрать CS, установите D4 для текущей прошивки. D8 соответствует GPIO15.
+
+Источник: [официальный пример Wemos для Micro SD Shield](https://github.com/wemos/D1_mini_Examples/blob/master/examples/04.Shields/Micro_SD_Shield/ReadWrite/ReadWrite.ino). На [странице shield](https://www.wemos.cc/en/latest/d1_mini_shield/micro_sd.html) GPIO для D4 ошибочно указан как 0; в ESP8266 D1 mini D4 — GPIO2.
+
+Схема относится к shield для D1 mini с питанием 3,3 В. У отдельных SD-модулей с регулятором питание может отличаться. На сигнальные выводы ESP8266 нельзя подавать 5 В; GPIO2 (D4) должен оставаться HIGH при запуске.
+
 ## Связь с инвертором
 
 ESP8266 отправляет Wi-Fi-модулю команду `set>server=<ESP_IP>:8899;` по UDP на порт 58899. Затем ожидает входящее TCP-соединение на порту 8899. По этому соединению передаются восьмибайтовые запросы Modbus RTU с CRC16: адрес устройства 1, функция 3, диапазоны 100–101, 108–109 и 201–234. Это RTU-кадры поверх TCP, без MBAP-заголовка Modbus TCP.
