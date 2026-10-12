@@ -993,6 +993,7 @@ bool readModbusRange(uint16_t start,uint16_t count){
 
 void addRecordEnergy(WebHistoryHour& out,
                      const StoredRecord& record){
+  out.hasData=true;
   out.gridKwh+=record.wh[0]/1000.0f;
   out.pvKwh+=record.wh[1]/1000.0f;
   out.loadKwh+=record.wh[2]/1000.0f;
@@ -1001,6 +1002,7 @@ void addRecordEnergy(WebHistoryHour& out,
 }
 
 void addCurrentBucket(WebHistoryHour& out){
+  out.hasData=true;
   out.gridKwh+=currentBucket.gridWs/3600000.0f;
   out.pvKwh+=currentBucket.pvWs/3600000.0f;
   out.loadKwh+=currentBucket.loadWs/3600000.0f;
