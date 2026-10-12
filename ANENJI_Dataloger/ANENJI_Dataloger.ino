@@ -82,6 +82,8 @@ String currentMode="Ожидание данных";
 String currentFaults="Неполадок нет";
 String currentWarnings="Предупреждений нет";
 bool faultRead=false,warningRead=false,modeRead=false;
+uint32_t currentFaultFlags=0,currentWarningFlags=0;
+uint16_t currentModeCode=0;
 
 StoredRecord dayRecords[288];
 bool dayValid[288];
@@ -93,6 +95,7 @@ size_t getHistoryForWeb(WebHistoryHour* output,size_t maxRecords,
                         uint8_t month,uint8_t day);
 bool saveBucket();
 bool saveSettings(const WebSettings& settings);
+bool saveLanguage(const String& language);
 
 uint16_t crc16Modbus(const uint8_t* data,size_t length){
   uint16_t crc=0xFFFF;
@@ -166,12 +169,9 @@ void loadSettings(){
      appSettings.timezone>14)appSettings.timezone=5;
 }
 
-bool saveSettings(const WebSettings& settings){
-  if(bucketHasMeasurement&&activeSlot&&!saveBucket()){
-    Serial.println("[SAVE] Не удалось сохранить текущую пятиминутку");
-    return false;
-  }
-
+bool persistSettings(const WebSettings& settings){
+  SettingsRecord oldRecord={};
+  EEPROM.get(0,oldRecord);
   SettingsRecord record={};
   record.magic=SETTINGS_MAGIC;
   record.version=SETTINGS_VERSION;
@@ -193,13 +193,31 @@ bool saveSettings(const WebSettings& settings){
   EEPROM.put(0,record);
 
   if(!EEPROM.commit()){
+    EEPROM.put(0,oldRecord); // Restore RAM mirror after a failed flash write.
     Serial.println("[SAVE] Ошибка записи настроек");
     return false;
   }
 
   appSettings=settings;
-  Serial.println("[SAVE] Пятиминутка и настройки сохранены");
+  Serial.println("[SAVE] Настройки сохранены");
   return true;
+}
+
+bool saveSettings(const WebSettings& settings){
+  if(bucketHasMeasurement&&activeSlot&&!saveBucket()){
+    Serial.println("[SAVE] Не удалось сохранить текущую пятиминутку");
+    return false;
+  }
+
+  return persistSettings(settings);
+}
+
+bool saveLanguage(const String& language){
+  if(language!="en"&&language!="ru")return false;
+  if(language==appSettings.language)return true;
+  WebSettings settings=appSettings;
+  settings.language=language;
+  return persistSettings(settings);
 }
 
 bool connectToWiFi(){
@@ -234,7 +252,7 @@ void startSetupAccessPoint(){
   WiFi.mode(WIFI_AP);
   WiFi.softAP("Anenji-setup","12345678");
   beginWebServer(fillWebLiveData,getTodaySamples,getHistoryForWeb,
-                 saveSettings,appSettings,true);
+                 saveSettings,saveLanguage,appSettings,true);
   Serial.println(WiFi.softAPIP());
 }
 
@@ -803,15 +821,17 @@ void accountMeasurement(const InstantPower& power,time_t now){
   }
 }
 
-String diagnosticText(uint32_t flags,bool faults){
-  if(!flags)return faults?"Неполадок нет":"Предупреждений нет";
-  String text=faults?"Неполадки: ":"Предупреждения: ";
+String diagnosticText(uint32_t flags,bool faults,bool ru=true){
+  if(!flags)return faults?(ru?"Неполадок нет":"No faults"):
+    (ru?"Предупреждений нет":"No warnings");
+  String text=faults?(ru?"Неполадки: ":"Faults: "):
+    (ru?"Предупреждения: ":"Warnings: ");
   bool first=true;
   for(uint8_t bit=0;bit<32;++bit){
     if(!(flags&(UINT32_C(1)<<bit)))continue;
     if(!first)text+=F("; ");
     first=false;
-    text+=faults?faultName(bit):warningName(bit);
+    text+=faults?faultName(bit,ru):warningName(bit,ru);
     text+=F(" [");
     text+=String(bit);
     text+=']';
@@ -831,9 +851,11 @@ void processDiagnosticRegisters(uint16_t start,uint16_t count,
     (static_cast<uint32_t>(bytes[2])<<8)|bytes[3];
 
   if(start==100){
+    currentFaultFlags=flags;
     currentFaults=diagnosticText(flags,true);
     faultRead=true;
   }else{
+    currentWarningFlags=flags;
     currentWarnings=diagnosticText(flags,false);
     warningRead=true;
   }
@@ -871,6 +893,7 @@ void processPowerRegisters(uint16_t start,uint16_t count,
   currentBatteryVoltage=signedRegister(bv)*0.1f;
   currentBatteryPercent=static_cast<uint8_t>(
     min(static_cast<uint16_t>(100),percent));
+  currentModeCode=mode;
   currentMode=workingModeName(mode);
   modeRead=true;
   currentStatus="Data updated";
@@ -1107,17 +1130,21 @@ void copyWebText(char* destination,size_t capacity,
 void fillWebLiveData(WebLiveData& d){
   d={};
   d.valid=previousPowerValid;
-  copyWebText(d.status,sizeof(d.status),currentStatus);
+  const bool ru=appSettings.language=="ru";
+  copyWebText(d.status,sizeof(d.status),currentStatus=="Data updated"?
+    String(ru?"Данные обновлены":"Data updated"):
+    String(ru?"Ожидание данных":"Waiting for data"));
   copyWebText(d.updateTime,sizeof(d.updateTime),currentUpdateTime);
   copyWebText(d.inverterIp,sizeof(d.inverterIp),appSettings.inverterIp);
   copyWebText(d.mode,sizeof(d.mode),
-              modeRead?currentMode:String("Ожидание данных"));
+              modeRead?String(workingModeName(currentModeCode,ru)):
+              String(ru?"Ожидание данных":"Waiting for data"));
   copyWebText(d.faults,sizeof(d.faults),
-              faultRead?currentFaults:
-              String("Диагностика неполадок недоступна"));
+              faultRead?diagnosticText(currentFaultFlags,true,ru):
+              String(ru?"Диагностика неполадок недоступна":"Fault diagnostics unavailable"));
   copyWebText(d.warnings,sizeof(d.warnings),
-              warningRead?currentWarnings:
-              String("Диагностика предупреждений недоступна"));
+              warningRead?diagnosticText(currentWarningFlags,false,ru):
+              String(ru?"Диагностика предупреждений недоступна":"Warning diagnostics unavailable"));
 
   d.gridPower=currentPower.grid;
   d.pvPower=currentPower.pv;
@@ -1226,7 +1253,7 @@ restoreCurrentBucket();
 
   tcpServer.begin();
   beginWebServer(fillWebLiveData,getTodaySamples,getHistoryForWeb,
-                 saveSettings,appSettings,false);
+                 saveSettings,saveLanguage,appSettings,false);
 
   Serial.printf("Резерв EEPROM: %u пятиминуток\n",
                 static_cast<unsigned>(EEPROM_RECORD_COUNT));
