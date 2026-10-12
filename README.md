@@ -21,9 +21,15 @@ ESP8266-based SD card datalogger for ANENJI hybrid solar inverters with Modbus m
 
 ## Схема подключения SD Card Shield
 
-![Схема Wemos D1 mini и Micro SD Shield](docs/wemos-d1-mini-sd-wiring.svg)
+![Сборка Wemos D1 mini и Micro SD Shield бутербродом по реальным фото](docs/wemos-sd-photo-stack.svg)
 
-Схема соответствует `SD_CS_PIN=D4` в прошивке. Положение выводов на рисунке условное: подключайте по обозначениям на платах.
+Shield устанавливается **сверху на Wemos D1 mini** через два ряда межплатных разъёмов по 8 контактов. Соединительные провода не нужны. На иллюстрации платы разнесены для наглядности; перед установкой совместите одноимённые выводы, особенно 3V3 и G/GND. Фото shield повёрнуто на 180° относительно оригинала для совпадения ориентации выводов.
+
+Фото shield взято из [официальной документации Wemos](https://www.wemos.cc/en/latest/d1_mini_shield/micro_sd.html), [оригинал фотографии](https://docs.wemos.cc/en/latest/_images/sd_v1.2.0_1_16x16.jpg). Фото Wemos D1 mini предоставлено владельцем проекта. Фотографии встроены в SVG; внешняя загрузка для отображения не требуется.
+
+[Электрическая схема соединений](docs/wemos-d1-mini-sd-wiring.svg).
+
+Схема соответствует `SD_CS_PIN=D4` в прошивке. Монтажная иллюстрация выполнена без масштаба: подключайте по обозначениям на платах.
 
 | Wemos D1 mini | GPIO | Micro SD Shield |
 | --- | --- | --- |
