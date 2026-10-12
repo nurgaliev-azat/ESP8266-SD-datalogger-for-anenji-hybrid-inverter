@@ -41,12 +41,14 @@ using WebSamplesCallback=size_t (*)(WebSample*,size_t);
 using WebHistoryCallback=size_t (*)(
   WebHistoryHour*,size_t,const String&,uint16_t,uint8_t,uint8_t);
 using WebSettingsCallback=bool (*)(const WebSettings&);
+using WebLanguageCallback=bool (*)(const String&);
 
 ESP8266WebServer anenjiWebServer(80);
 WebLiveCallback webLiveCallback=nullptr;
 WebSamplesCallback webSamplesCallback=nullptr;
 WebHistoryCallback webHistoryCallback=nullptr;
 WebSettingsCallback webSettingsCallback=nullptr;
+WebLanguageCallback webLanguageCallback=nullptr;
 WebSettings webSettings;
 bool webSetupMode=false;
 
@@ -87,7 +89,7 @@ String webSettingsPage(){
   h+=F(
     "<!doctype html><html><head><meta charset='utf-8'>"
     "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-    "<title>Anenji settings</title><style>"
+    "<title>Anenji</title><style>"
     "*{box-sizing:border-box}body{font:16px Arial;background:#edf1f8;"
     "color:#172033;margin:0;padding:20px}"
     ".box{max-width:650px;margin:auto;background:#fff;padding:24px;"
@@ -103,9 +105,10 @@ String webSettingsPage(){
   h+=ru?F("<h2>Настройки Anenji</h2>"):
         F("<h2>Anenji settings</h2>");
   if(webSetupMode)
-    h+=F("<p class='info'>Точка доступа Anenji-setup. "
-         "Сохраните настройки для подключения к Wi-Fi.</p>");
-  else h+=F("<p><a href='/'>← Dashboard / Панель</a></p>");
+    h+=ru?F("<p class='info'>Точка доступа Anenji-setup. Сохраните настройки для подключения к Wi-Fi.</p>"):
+          F("<p class='info'>Anenji-setup access point. Save your settings to connect to Wi-Fi.</p>");
+  else h+=ru?F("<p><a href='/'>← Панель</a></p>"):
+             F("<p><a href='/'>← Dashboard</a></p>");
 
   h+=F("<form method='post' action='/save'>");
 
@@ -145,15 +148,13 @@ String webSettingsPage(){
   h+=String(webSettings.timezone);
   h+=F("'>");
 
-  h+=ru?F("<label>Язык</label>"):F("<label>Language</label>");
-  h+=F("<select name='language'><option value='en'");
-  if(!ru)h+=F(" selected");
-  h+=F(">English</option><option value='ru'");
-  if(ru)h+=F(" selected");
-  h+=F(">Русский</option></select>");
   h+=ru?F("<button>Сохранить и перезагрузить</button>"):
         F("<button>Save and reboot</button>");
-  h+=F("</form></div></body></html>");
+  h+=F("</form></div><script>document.documentElement.lang='");
+  h+=ru?"ru":"en";
+  h+=F("';document.title='");
+  h+=ru?"Настройки Anenji":"Anenji settings";
+  h+=F("';</script></body></html>");
   return h;
 }
 
@@ -169,6 +170,7 @@ body{font:16px Arial,sans-serif;margin:0;background:#edf1f8;color:#172033}
 .block{background:white;border-radius:20px;padding:20px;margin:0 0 18px;box-shadow:0 5px 22px #c4ccda}
 h2{font-size:21px;margin:0 0 16px}
 .top{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.top-actions{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.language-switch{display:flex;gap:3px}.top{flex-wrap:wrap}
 .settings{color:#326de8;white-space:nowrap}
 .status{line-height:1.9}
 .diagram{display:grid;grid-template-columns:minmax(125px,1fr) minmax(20px,1.5fr) minmax(155px,1.1fr) minmax(20px,1.5fr) minmax(125px,1fr);grid-template-rows:1fr 1fr;gap:32px 0;align-items:center;min-height:410px}
@@ -221,14 +223,15 @@ button.active{background:#326de8;color:white}
 }
 </style></head><body><main class="wrap">
 <section class="block status">
-<div class="top"><div><b>Status:</b> <span id="status">Waiting for data</span></div>
-<a class="settings" href="/settings">Настройки / Settings</a></div>
-<div><b>Inverter IP:</b> <span id="inverterIp">—</span></div>
+<div class="top"><div><b data-i18n="statusLabel">Status:</b> <span id="status">Waiting for data</span></div>
+<div class="top-actions"><div class="language-switch" role="group" aria-label="Language"><button id="langEn" type="button">EN</button><button id="langRu" type="button">RU</button></div><a class="settings" data-i18n="settings" href="/settings">Settings</a></div></div>
+<div id="languageMessage" role="status" class="notice"></div>
+<div><b data-i18n="inverterIp">Inverter IP:</b> <span id="inverterIp">—</span></div>
 </section>
 <section class="block"><div class="diagram">
 <div class="device grid-device">
 <div class="icon" aria-hidden="true"><svg viewBox="0 0 64 64"><path fill="#ffae3b" d="M35 3 15 34h14l-3 27 23-36H35z"/></svg></div>
-<div class="card">Grid<br><span id="gridPower">0</span> W<br><small><span id="gridVoltage">0</span> V</small></div>
+<div class="card"><span data-i18n="grid">Grid</span><br><span id="gridPower">0</span> <span data-i18n="w">W</span><br><small><span id="gridVoltage">0</span> <span data-i18n="v">V</span></small></div>
 </div>
 <div class="line grid-line off" id="flowGrid"><i class="square"></i><i class="square"></i><i class="square"></i></div>
 <div class="device battery-device">
@@ -238,8 +241,8 @@ button.active{background:#326de8;color:white}
 <rect x="21" y="17" width="22" height="38" rx="2" fill="#aeed73"/>
 <path d="M32 24v13m-6-7h12" stroke="white" stroke-width="3"/>
 </svg></div>
-<div class="card">Battery<br><span id="batteryPercent">0</span>% · <span id="batteryPower">0</span> W<br>
-<small><span id="batteryVoltage">0</span> V</small></div>
+<div class="card"><span data-i18n="battery">Battery</span><br><span id="batteryPercent">0</span>% · <span id="batteryPower">0</span> <span data-i18n="w">W</span><br>
+<small><span id="batteryVoltage">0</span> <span data-i18n="v">V</span></small></div>
 </div>
 <div class="line battery-line off" id="flowBattery"><i class="square"></i><i class="square"></i><i class="square"></i></div>
 <div class="inverter"><div class="icon" aria-hidden="true">▣</div>
@@ -251,53 +254,53 @@ button.active{background:#326de8;color:white}
 <div class="line pv-line off reverse" id="flowPv"><i class="square"></i><i class="square"></i><i class="square"></i></div>
 <div class="device pv-device">
 <div class="icon" aria-hidden="true">☀️</div>
-<div class="card">PV<br><span id="pvPower">0</span> W<br><small><span id="pvVoltage">0</span> V</small></div>
+<div class="card"><span data-i18n="pv">PV</span><br><span id="pvPower">0</span> <span data-i18n="w">W</span><br><small><span id="pvVoltage">0</span> <span data-i18n="v">V</span></small></div>
 </div>
 <div class="line load-line off" id="flowLoad"><i class="square"></i><i class="square"></i><i class="square"></i></div>
 <div class="device load-device">
 <div class="icon" aria-hidden="true">🏠</div>
-<div class="card">Load<br><span id="loadPower">0</span> W<br><small><span id="loadVoltage">0</span> V</small></div>
+<div class="card"><span data-i18n="load">Load</span><br><span id="loadPower">0</span> <span data-i18n="w">W</span><br><small><span id="loadVoltage">0</span> <span data-i18n="v">V</span></small></div>
 </div></div></section>
 <section class="block">
-<h2>Total energy — <span id="energyDate">—</span></h2>
+<h2><span data-i18n="totalEnergy">Total energy</span> — <span id="energyDate">—</span></h2>
 <div class="tiles">
-<div class="tile" style="--color:var(--grid)">Grid<br><b id="gridKwh">0</b> kWh</div>
-<div class="tile" style="--color:var(--pv)">PV<br><b id="pvKwh">0</b> kWh</div>
-<div class="tile" style="--color:var(--load)">Load<br><b id="loadKwh">0</b> kWh</div>
-<div class="tile" style="--color:var(--charge)">Battery charge<br><b id="chargeKwh">0</b> kWh</div>
-<div class="tile" style="--color:var(--discharge)">Battery discharge<br><b id="dischargeKwh">0</b> kWh</div>
+<div class="tile" style="--color:var(--grid)"><span data-i18n="grid">Grid</span><br><b id="gridKwh">0</b> <span data-i18n="kwh">kWh</span></div>
+<div class="tile" style="--color:var(--pv)"><span data-i18n="pv">PV</span><br><b id="pvKwh">0</b> <span data-i18n="kwh">kWh</span></div>
+<div class="tile" style="--color:var(--load)"><span data-i18n="load">Load</span><br><b id="loadKwh">0</b> <span data-i18n="kwh">kWh</span></div>
+<div class="tile" style="--color:var(--charge)"><span data-i18n="charge">Battery charge</span><br><b id="chargeKwh">0</b> <span data-i18n="kwh">kWh</span></div>
+<div class="tile" style="--color:var(--discharge)"><span data-i18n="discharge">Battery discharge</span><br><b id="dischargeKwh">0</b> <span data-i18n="kwh">kWh</span></div>
 </div>
-<div class="notice">Итоги за текущий календарный день, включая текущий час.</div>
+<div class="notice" data-i18n="totalsNotice">Итоги за текущий календарный день, включая текущий час.</div>
 </section>
 <section class="block">
-<h2>Мгновенная мощность — текущий день</h2>
+<h2 data-i18n="dayTitle">Мгновенная мощность — текущий день</h2>
 <canvas id="dayChart" class="chart"></canvas>
 <div class="checks" id="dayChecks">
-<label style="--color:var(--grid)"><input id="dayGrid" type="checkbox" checked> Grid</label>
-<label style="--color:var(--pv)"><input id="dayPv" type="checkbox" checked> PV</label>
-<label style="--color:var(--load)"><input id="dayLoad" type="checkbox" checked> Load</label>
-<label style="--color:var(--charge)"><input id="dayCharge" type="checkbox" checked> Battery charge</label>
-<label style="--color:var(--discharge)"><input id="dayDischarge" type="checkbox" checked> Battery discharge</label>
+<label style="--color:var(--grid)"><input id="dayGrid" type="checkbox" checked> <span data-i18n="grid">Grid</span></label>
+<label style="--color:var(--pv)"><input id="dayPv" type="checkbox" checked> <span data-i18n="pv">PV</span></label>
+<label style="--color:var(--load)"><input id="dayLoad" type="checkbox" checked> <span data-i18n="load">Load</span></label>
+<label style="--color:var(--charge)"><input id="dayCharge" type="checkbox" checked> <span data-i18n="charge">Battery charge</span></label>
+<label style="--color:var(--discharge)"><input id="dayDischarge" type="checkbox" checked> <span data-i18n="discharge">Battery discharge</span></label>
 </div></section>
 <section class="block">
-<h2>История накопленной энергии</h2>
+<h2 data-i18n="historyTitle">История накопленной энергии</h2>
 <div class="controls">
-<button data-scale="hour">Часы</button>
-<button data-scale="day">Дни</button>
-<button data-scale="month">Месяцы</button>
-<button data-scale="year">Годы</button>
-<button id="prevPeriod" title="Предыдущий период">◀</button>
+<button data-scale="hour" data-i18n="hour">Часы</button>
+<button data-scale="day" data-i18n="day">Дни</button>
+<button data-scale="month" data-i18n="month">Месяцы</button>
+<button data-scale="year" data-i18n="year">Годы</button>
+<button id="prevPeriod" data-i18n-title="previous" title="Previous period">◀</button>
 <span class="period" id="periodLabel">—</span>
-<button id="nextPeriod" title="Следующий период">▶</button>
-<button id="currentPeriod">Сегодня</button>
+<button id="nextPeriod" data-i18n-title="next" title="Next period">▶</button>
+<button id="currentPeriod" data-i18n="today">Сегодня</button>
 </div>
 <canvas id="historyChart" class="chart"></canvas>
 <div class="checks" id="historyChecks">
-<label style="--color:var(--grid)"><input id="histGrid" type="checkbox" checked> Grid</label>
-<label style="--color:var(--pv)"><input id="histPv" type="checkbox" checked> PV</label>
-<label style="--color:var(--load)"><input id="histLoad" type="checkbox" checked> Load</label>
-<label style="--color:var(--charge)"><input id="histCharge" type="checkbox" checked> Battery charge</label>
-<label style="--color:var(--discharge)"><input id="histDischarge" type="checkbox" checked> Battery discharge</label>
+<label style="--color:var(--grid)"><input id="histGrid" type="checkbox" checked> <span data-i18n="grid">Grid</span></label>
+<label style="--color:var(--pv)"><input id="histPv" type="checkbox" checked> <span data-i18n="pv">PV</span></label>
+<label style="--color:var(--load)"><input id="histLoad" type="checkbox" checked> <span data-i18n="load">Load</span></label>
+<label style="--color:var(--charge)"><input id="histCharge" type="checkbox" checked> <span data-i18n="charge">Battery charge</span></label>
+<label style="--color:var(--discharge)"><input id="histDischarge" type="checkbox" checked> <span data-i18n="discharge">Battery discharge</span></label>
 </div></section>
 </main>
 <script>
@@ -316,6 +319,54 @@ let selected={year:0,month:0,day:0};
 let historyRequest=0;
 const format=(n,d=2)=>Number(n||0).toFixed(d);
 const pad=n=>String(n).padStart(2,'0');
+
+
+const translations={"en":{"statusLabel":"Status:","inverterIp":"Inverter IP:","settings":"Settings","grid":"Grid","battery":"Battery","pv":"PV","load":"Load","charge":"Battery charge","discharge":"Battery discharge","w":"W","v":"V","kw":"kW","kwh":"kWh","totalEnergy":"Total energy","totalsNotice":"Totals for the current calendar day, including the current hour.","dayTitle":"Power — current day","historyTitle":"Accumulated energy history","today":"Today","hour":"Hours","day":"Days","month":"Months","year":"Years","previous":"Previous period","next":"Next period","mode":"Mode","waiting":"Waiting for data","noFaults":"No faults","noWarnings":"No warnings","saveError":"Could not save language. Please try again.","languageLabel":"Interface language"},"ru":{"statusLabel":"Статус:","inverterIp":"IP инвертора:","settings":"Настройки","grid":"Сеть","battery":"Батарея","pv":"Солнечные панели","load":"Нагрузка","charge":"Заряд батареи","discharge":"Разряд батареи","w":"Вт","v":"В","kw":"кВт","kwh":"кВт·ч","totalEnergy":"Суммарная энергия","totalsNotice":"Итоги за текущий календарный день, включая текущий час.","dayTitle":"Мощность — текущий день","historyTitle":"История накопленной энергии","today":"Сегодня","hour":"Часы","day":"Дни","month":"Месяцы","year":"Годы","previous":"Предыдущий период","next":"Следующий период","mode":"Режим","waiting":"Ожидание данных","noFaults":"Неполадок нет","noWarnings":"Предупреждений нет","saveError":"Не удалось сохранить язык. Попробуйте ещё раз.","languageLabel":"Язык интерфейса"}};
+let language='en',languageSaving=false,languageRevision=0;
+const t=key=>translations[language][key]||key;
+function applyLanguage(next){
+ if(next!=='en'&&next!=='ru')return;
+ language=next;
+ document.documentElement.lang=next;
+ document.querySelectorAll('[data-i18n]').forEach(el=>el.textContent=t(el.dataset.i18n));
+ document.querySelectorAll('[data-i18n-title]').forEach(el=>{
+  el.title=t(el.dataset.i18nTitle);el.setAttribute('aria-label',el.title);
+ });
+ document.querySelector('.language-switch').setAttribute('aria-label',t('languageLabel'));
+ for(const [id,code] of [['langEn','en'],['langRu','ru']]){
+  $(id).classList.toggle('active',next===code);
+  $(id).setAttribute('aria-pressed',String(next===code));
+ }
+ if(!live){
+  $('status').textContent=t('waiting');
+  $('mode').textContent=t('mode')+': '+t('waiting');
+  $('faults').textContent=t('noFaults');$('warnings').textContent=t('noWarnings');
+ }
+ dayChart();historyChart();
+}
+async function changeLanguage(next){
+ if(languageSaving||next===language)return;
+ languageSaving=true; ++languageRevision;
+ $('langEn').disabled=$('langRu').disabled=true;
+ $('languageMessage').textContent='';
+ try{
+  const response=await fetch('/api/language',{
+   method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
+   body:new URLSearchParams({language:next})
+  });
+  if(!response.ok)throw Error('HTTP '+response.status);
+  const result=await response.json();
+  if(result.language!==next)throw Error('Invalid language response');
+  ++languageRevision;
+  live=result;
+  applyLanguage(result.language);
+  renderLiveData(result);
+  updateTotals();
+ }catch(e){$('languageMessage').textContent=t('saveError');console.error(e)}
+ finally{languageSaving=false;$('langEn').disabled=$('langRu').disabled=false}
+}
+$('langEn').onclick=()=>changeLanguage('en');
+$('langRu').onclick=()=>changeLanguage('ru');
 
 function setToday(){
  if(!live||!/^\d{4}-\d\d-\d\d/.test(live.updateTime))return;
@@ -337,7 +388,7 @@ function axes(ctx,w,h,max,yUnit,ticks){
  for(let i=0;i<=ticks;i++){
   const y=bottom-(bottom-top)*i/ticks;
   ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(right,y);ctx.stroke();
-  ctx.fillText((max*i/ticks).toFixed(yUnit==='кВт'?1:2),left-7,y);
+  ctx.fillText((max*i/ticks).toFixed(yUnit===t('kw')?1:2),left-7,y);
  }
  ctx.save();ctx.translate(12,(top+bottom)/2);ctx.rotate(-Math.PI/2);
  ctx.textAlign='center';ctx.fillText(yUnit,0,0);ctx.restore();
@@ -351,7 +402,7 @@ function dayChart(){
   peak=Math.max(peak,Number(p[s.key])||0);
  const ticks=Math.max(1,Math.ceil(peak/200));
  const max=ticks*.2;
- const a=axes(ctx,w,h,max,'кВт',ticks);
+ const a=axes(ctx,w,h,max,t('kw'),ticks);
  ctx.textAlign='center';ctx.textBaseline='top';ctx.fillStyle='#516176';
  for(let hour=0;hour<=24;hour+=w<550?4:2){
   const x=a.left+(a.right-a.left)*hour/24;
@@ -411,13 +462,13 @@ function historyChart(){
  $('periodLabel').textContent=periodText();
  document.querySelectorAll('[data-scale]').forEach(
   b=>b.classList.toggle('active',b.dataset.scale===scale));
- if(!selected.year){axes(ctx,w,h,1,'кВт·ч',5);return}
+ if(!selected.year){axes(ctx,w,h,1,t('kwh'),5);return}
  const data=columns(),active=series.filter(s=>$(s.hist).checked);
  let peak=0;
  for(const p of data)
   for(const s of active)peak=Math.max(peak,p[s.key]);
  const max=Math.max(.2,Math.ceil(peak*5)/5);
- const a=axes(ctx,w,h,max,'кВт·ч',5);
+ const a=axes(ctx,w,h,max,t('kwh'),5);
  const gw=(a.right-a.left)/data.length;
  const bar=Math.max(1,Math.min(17,
    (gw-2)/Math.max(1,active.length)));
@@ -486,10 +537,7 @@ async function loadHistory(){
   historyChart();
  }catch(e){console.error(e)}
 }
-async function refresh(){
- try{
-  const d=await json('/api/live');
-  live=d;
+function renderLiveData(d){
   $('status').textContent=d.status+
     (d.updateTime&&d.updateTime!=='-'?
      ' — '+d.updateTime:'');
@@ -501,12 +549,21 @@ async function refresh(){
      key.includes('Voltage')?1:0);
   $('batteryPercent').textContent=
     Number(d.batteryPercent||0);
-  $('mode').textContent='Режим: '+
-    (d.mode||'ожидание данных');
-  $('faults').textContent=d.faults||'Неполадок нет';
+  $('mode').textContent=t('mode')+': '+
+    (d.mode||t('waiting')); 
+  $('faults').textContent=d.faults||t('noFaults');
   $('warnings').textContent=
-    d.warnings||'Предупреждений нет';
+    d.warnings||t('noWarnings');
   updateFlows(d);
+}
+async function refresh(){
+ try{
+  const revision=languageRevision;
+  const d=await json('/api/live');
+  if(revision!==languageRevision)return;
+  live=d;
+  if(!languageSaving||d.language===language)applyLanguage(d.language);
+  renderLiveData(d);
 
   if(!selected.year)setToday();
 
@@ -577,7 +634,12 @@ window.addEventListener('resize',()=>{
  dayChart();
  historyChart();
 });
-refresh();
+async function startDashboard(){
+ try{const result=await json('/api/language');applyLanguage(result.language)}
+ catch(e){applyLanguage('en')}
+ await refresh();
+}
+startDashboard();
 json('/api/interval').then(d=>
  setInterval(refresh,Number(d.interval)||5000)
 ).catch(()=>setInterval(refresh,5000));
@@ -607,7 +669,8 @@ void webHandleLive(){
   String j;
   j.reserve(1400);
   j+='{';
-  j+=F("\"valid\":");j+=d.valid?F("true"):F("false");
+  j+=F("\"language\":\"");j+=webSettings.language;
+  j+=F("\",\"valid\":");j+=d.valid?F("true"):F("false");
   j+=F(",\"status\":\"");j+=webJsonEscape(d.status);
   j+=F("\",\"updateTime\":\"");
   j+=webJsonEscape(d.updateTime);
@@ -738,8 +801,8 @@ void webHandleSave(){
   s.timezone=static_cast<int8_t>(
     constrain(anenjiWebServer.arg("timezone")
       .toInt(),-12L,14L));
-  s.language=
-    anenjiWebServer.arg("language")=="ru"?"ru":"en";
+  // Keep the language selected on the dashboard.
+  s.language=webSettings.language;
 
   IPAddress ip;
   if(s.ssid.isEmpty()||
@@ -748,23 +811,43 @@ void webHandleSave(){
      !ip.fromString(s.inverterIp)){
     anenjiWebServer.send(
       400,"text/plain; charset=utf-8",
-      "Укажите корректные настройки Wi-Fi и IPv4.");
+      webSettings.language=="ru"?"Укажите корректные настройки Wi-Fi и IPv4.":
+      "Enter valid Wi-Fi settings and an IPv4 address.");
     return;
   }
 
 if(!webSettingsCallback||!webSettingsCallback(s)){
   anenjiWebServer.send(
     500,"text/plain; charset=utf-8",
-    "Ошибка сохранения. Перезагрузка отменена.");
+    webSettings.language=="ru"?"Ошибка сохранения. Перезагрузка отменена.":
+    "Could not save settings. Reboot cancelled.");
   return;
 }
 webSettings=s;
   anenjiWebServer.send(
     200,"text/html; charset=utf-8",
-    "<!doctype html><meta charset='utf-8'>"
-    "<h2>Настройки сохранены. Перезагрузка...</h2>");
+    webSettings.language=="ru"?
+    "<!doctype html><html lang='ru'><meta charset='utf-8'><h2>Настройки сохранены. Перезагрузка...</h2></html>":
+    "<!doctype html><html lang='en'><meta charset='utf-8'><h2>Settings saved. Rebooting...</h2></html>");
   delay(1000);
   ESP.restart();
+}
+
+void webHandleLanguage(){
+  const String language=anenjiWebServer.arg("language");
+  if(language!="en"&&language!="ru"){
+    anenjiWebServer.send(400,"application/json","{\"error\":\"invalid_language\"}");
+    return;
+  }
+  if(language!=webSettings.language){
+    if(!webLanguageCallback||!webLanguageCallback(language)){
+      anenjiWebServer.send(500,"application/json","{\"error\":\"save_failed\"}");
+      return;
+    }
+    webSettings.language=language;
+  }
+  // Return translated cached diagnostics in the same successful response.
+  webHandleLive();
 }
 
 void beginWebServer(
@@ -772,6 +855,7 @@ void beginWebServer(
   WebSamplesCallback samplesCallback,
   WebHistoryCallback historyCallback,
   WebSettingsCallback settingsCallback,
+  WebLanguageCallback languageCallback,
   const WebSettings& initialSettings,
   bool setupMode=false
 ){
@@ -779,6 +863,7 @@ void beginWebServer(
   webSamplesCallback=samplesCallback;
   webHistoryCallback=historyCallback;
   webSettingsCallback=settingsCallback;
+  webLanguageCallback=languageCallback;
   webSettings=initialSettings;
   webSetupMode=setupMode;
 
@@ -808,6 +893,11 @@ void beginWebServer(
       200,"application/json; charset=utf-8",j);
   });
 
+  anenjiWebServer.on("/api/language",HTTP_POST,webHandleLanguage);
+  anenjiWebServer.on("/api/language",HTTP_GET,[](){
+    anenjiWebServer.send(200,"application/json",
+      String("{\"language\":\"")+webSettings.language+"\"}");
+  });
   anenjiWebServer.on(
     "/save",HTTP_POST,webHandleSave);
   anenjiWebServer.on(
