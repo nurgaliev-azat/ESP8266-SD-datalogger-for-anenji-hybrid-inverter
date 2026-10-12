@@ -49,68 +49,68 @@ const RegisterDefinition ANENJI_REGISTERS[]={
 const size_t ANENJI_REGISTER_COUNT=
   sizeof(ANENJI_REGISTERS)/sizeof(ANENJI_REGISTERS[0]);
 
-inline const char* workingModeName(uint16_t mode){
+inline const char* workingModeName(uint16_t mode,bool ru=true){
   switch(mode){
-    case 0:return "Включено";
-    case 1:return "Режим ожидания";
-    case 2:return "Основной режим";
-    case 3:return "Автономная работа";
-    case 4:return "Байпас от сети к нагрузке";
-    case 5:return "Зарядка";
-    case 6:return "Авария";
-    default:return "Неизвестно";
+    case 0:return ru?"Включено":"Power on";
+    case 1:return ru?"Режим ожидания":"Standby";
+    case 2:return ru?"Основной режим":"Main mode";
+    case 3:return ru?"Автономная работа":"Off-grid operation";
+    case 4:return ru?"Байпас от сети к нагрузке":"Grid bypass to load";
+    case 5:return ru?"Зарядка":"Charging";
+    case 6:return ru?"Авария":"Fault";
+    default:return ru?"Неизвестно":"Unknown";
   }
 }
 
-inline const char* faultName(uint8_t bit){
+inline const char* faultName(uint8_t bit,bool ru=true){
   switch(bit){
-    case 1:return "Перегрев DCDC";
-    case 2:return "Перенапряжение батареи";
-    case 4:return "Короткое замыкание выхода";
-    case 5:return "Перенапряжение инвертора";
-    case 6:return "Перегрузка выхода";
-    case 7:return "Перенапряжение шины";
-    case 9:return "Переток PV";
-    case 10:return "Перенапряжение PV";
-    case 11:return "Переток батареи";
-    case 12:return "Переток инвертора";
-    case 13:return "Низкое напряжение шины";
-    case 15:return "Высокая составляющая DC";
-    case 17:return "Ошибка нулевого смещения выхода";
-    case 18:return "Ошибка нулевого смещения инвертора";
-    case 19:return "Ошибка нулевого смещения батареи";
-    case 20:return "Ошибка нулевого смещения PV";
-    case 21:return "Низкое напряжение инвертора";
-    case 22:return "Защита от отрицательной мощности";
-    case 23:return "Потеря ведущего устройства";
-    case 24:return "Ошибка синхронизации";
-    case 26:return "Несовместимые версии";
-    default:return "Неизвестная авария";
+    case 1:return ru?"Перегрев DCDC":"DC-DC overtemperature";
+    case 2:return ru?"Перенапряжение батареи":"Battery overvoltage";
+    case 4:return ru?"Короткое замыкание выхода":"Output short circuit";
+    case 5:return ru?"Перенапряжение инвертора":"Inverter overvoltage";
+    case 6:return ru?"Перегрузка выхода":"Output overload";
+    case 7:return ru?"Перенапряжение шины":"Bus overvoltage";
+    case 9:return ru?"Переток PV":"PV overcurrent";
+    case 10:return ru?"Перенапряжение PV":"PV overvoltage";
+    case 11:return ru?"Переток батареи":"Battery overcurrent";
+    case 12:return ru?"Переток инвертора":"Inverter overcurrent";
+    case 13:return ru?"Низкое напряжение шины":"Bus undervoltage";
+    case 15:return ru?"Высокая составляющая DC":"High DC component";
+    case 17:return ru?"Ошибка нулевого смещения выхода":"Output zero-offset error";
+    case 18:return ru?"Ошибка нулевого смещения инвертора":"Inverter zero-offset error";
+    case 19:return ru?"Ошибка нулевого смещения батареи":"Battery zero-offset error";
+    case 20:return ru?"Ошибка нулевого смещения PV":"PV zero-offset error";
+    case 21:return ru?"Низкое напряжение инвертора":"Inverter undervoltage";
+    case 22:return ru?"Защита от отрицательной мощности":"Negative power protection";
+    case 23:return ru?"Потеря ведущего устройства":"Master device lost";
+    case 24:return ru?"Ошибка синхронизации":"Synchronization error";
+    case 26:return ru?"Несовместимые версии":"Incompatible versions";
+    default:return ru?"Неизвестная авария":"Unknown fault";
   }
 }
 
-inline const char* warningName(uint8_t bit){
+inline const char* warningName(uint8_t bit,bool ru=true){
   switch(bit){
-    case 0:return "Потеря перехода через ноль";
-    case 1:return "Ненормальная форма сети";
-    case 2:return "Перенапряжение сети";
-    case 3:return "Низкое напряжение сети";
-    case 4:return "Высокая частота сети";
-    case 5:return "Низкая частота сети";
-    case 6:return "Низкое напряжение PV";
-    case 7:return "Перегрев";
-    case 8:return "Низкое напряжение батареи";
-    case 9:return "Батарея не подключена";
-    case 10:return "Перегрузка";
-    case 11:return "Уравнительный заряд";
-    case 12:return "Глубокий разряд батареи";
-    case 13:return "Ограничение мощности";
-    case 14:return "Заблокирован вентилятор";
-    case 15:return "Недостаточно энергии PV";
-    case 16:return "Прерывание параллельной связи";
-    case 17:return "Несовместимый режим";
-    case 18:return "Разница напряжений батарей";
-    default:return "Неизвестное предупреждение";
+    case 0:return ru?"Потеря перехода через ноль":"Zero crossing lost";
+    case 1:return ru?"Ненормальная форма сети":"Abnormal grid waveform";
+    case 2:return ru?"Перенапряжение сети":"Grid overvoltage";
+    case 3:return ru?"Низкое напряжение сети":"Grid undervoltage";
+    case 4:return ru?"Высокая частота сети":"Grid frequency too high";
+    case 5:return ru?"Низкая частота сети":"Grid frequency too low";
+    case 6:return ru?"Низкое напряжение PV":"PV undervoltage";
+    case 7:return ru?"Перегрев":"Overtemperature";
+    case 8:return ru?"Низкое напряжение батареи":"Battery undervoltage";
+    case 9:return ru?"Батарея не подключена":"Battery disconnected";
+    case 10:return ru?"Перегрузка":"Overload";
+    case 11:return ru?"Уравнительный заряд":"Equalization charge";
+    case 12:return ru?"Глубокий разряд батареи":"Deep battery discharge";
+    case 13:return ru?"Ограничение мощности":"Power limiting";
+    case 14:return ru?"Заблокирован вентилятор":"Fan blocked";
+    case 15:return ru?"Недостаточно энергии PV":"Insufficient PV energy";
+    case 16:return ru?"Прерывание параллельной связи":"Parallel communication interrupted";
+    case 17:return ru?"Несовместимый режим":"Incompatible mode";
+    case 18:return ru?"Разница напряжений батарей":"Battery voltage difference";
+    default:return ru?"Неизвестное предупреждение":"Unknown warning";
   }
 }
 #endif
