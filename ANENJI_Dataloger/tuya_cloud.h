@@ -88,15 +88,41 @@ bool parseRules(JsonVariantConst input,Rule*out,size_t&count){
  count=0;
  for(JsonObjectConst o:array){
   if(o.isNull())return false;
-  Rule r;const char*name=o["name"]|"",*device=o["device"]|"",*code=o["code"]|"";
-  if(!name[0]||strlen(name)>=sizeof(r.name)||!safeIdentifier(device,64)||!safeIdentifier(code,40))return false;
-  strlcpy(r.name,name,sizeof(r.name));strlcpy(r.device,device,sizeof(r.device));strlcpy(r.code,code,sizeof(r.code));
-  if(!o["enabled"].is<bool>()||!o["any"].is<bool>())return false;
-  r.enabled=o["enabled"].as<bool>();r.any=o["any"].as<bool>();
-  JsonVariantConst value=o["value"];
-  if(value.isNull()||value.is<JsonObjectConst>()||value.is<JsonArrayConst>())return false;
-  if(measureJson(value)>=sizeof(r.value))return false;
-  serializeJson(value,r.value,sizeof(r.value));
+  Rule r;const char*name=o["name"]|"";
+  if(!name[0]||strlen(name)>=sizeof(r.name))return false;
+  strlcpy(r.name,name,sizeof(r.name));
+  if(!o["enabled"].is<bool>())return false;r.enabled=o["enabled"].as<bool>();
+  const char*expression=o["expression"]|"";
+  if(strlen(expression)>TuyaExpression::MAX_LENGTH)return false;
+  if(expression[0]){
+   float empty[SENSOR_COUNT]={};
+   if(!TuyaExpression::evaluate(expression,empty).valid)return false;
+   strlcpy(r.expression,expression,sizeof(r.expression));
+  }
+  if(o.containsKey("action")){
+   const char*action=o["action"]|"";size_t length=strlen(action);
+   if(length<7||length>256||strncmp(action,"SET(",4)||action[length-1]!=')')return false;
+   String args=String("[")+String(action).substring(4,length-1)+"]";
+   DynamicJsonDocument statement(512);
+   if(deserializeJson(statement,args.c_str())||!statement.is<JsonArray>()||statement.size()!=3||
+     !statement[0].is<const char*>()||!statement[1].is<const char*>())return false;
+   const char*device=statement[0],*code=statement[1];
+   if(!safeIdentifier(device,64)||!safeIdentifier(code,40))return false;
+   JsonVariantConst value=statement[2];
+   if(value.isNull()||value.is<JsonObjectConst>()||value.is<JsonArrayConst>()||
+     (value.is<double>()&&!isfinite(value.as<double>()))||measureJson(value)>=sizeof(r.value))return false;
+   strlcpy(r.device,device,sizeof(r.device));strlcpy(r.code,code,sizeof(r.code));serializeJson(value,r.value,sizeof(r.value));
+  }else{
+   const char*device=o["device"]|"",*code=o["code"]|"";
+   if(!safeIdentifier(device,64)||!safeIdentifier(code,40))return false;
+   strlcpy(r.device,device,sizeof(r.device));strlcpy(r.code,code,sizeof(r.code));
+   JsonVariantConst value=o["value"];
+   if(value.isNull()||value.is<JsonObjectConst>()||value.is<JsonArrayConst>()||
+     (value.is<double>()&&!isfinite(value.as<double>()))||measureJson(value)>=sizeof(r.value))return false;
+   serializeJson(value,r.value,sizeof(r.value));
+  }
+  // Legacy flat conditions remain supported when no expression is supplied.
+  r.any=o["any"]|false;
   uint32_t n;
   if(!integer(o["weekdays"],1,127,n))return false;r.weekdays=n;
   if(!integer(o["startMinute"],0,1439,n))return false;r.startMinute=n;
@@ -106,7 +132,8 @@ bool parseRules(JsonVariantConst input,Rule*out,size_t&count){
   if(r.holdSeconds+r.delaySeconds>604800)return false;
   if(!integer(o["cooldownSeconds"],60,604800,n))return false;r.cooldownSeconds=n;
   if(!integer(o["repeatSeconds"],0,604800,n)||(n&&n<60))return false;r.repeatSeconds=n;
-  if(!o["conditions"].is<JsonArrayConst>())return false;
+  if(r.expression[0]){out[count++]=r;continue;}
+  if(!o["any"].is<bool>()||!o["conditions"].is<JsonArrayConst>())return false;
   JsonArrayConst conditions=o["conditions"].as<JsonArrayConst>();
   if(conditions.size()>MAX_CONDITIONS)return false;
   for(JsonObjectConst c:conditions){
@@ -126,7 +153,10 @@ void rulesJson(JsonArray array,const Rule*source=rules,size_t count=ruleCount){
  for(size_t i=0;i<count;++i){
   const Rule&r=source[i];JsonObject o=array.createNestedObject();
   o["name"]=r.name;o["enabled"]=r.enabled;o["device"]=r.device;o["code"]=r.code;
+  o["expression"]=r.expression;
   DynamicJsonDocument value(256);deserializeJson(value,r.value);o["value"]=value.as<JsonVariant>();
+  String action=String("SET(\"")+r.device+"\",\""+r.code+"\","+r.value+")";
+  o["action"]=action;
   o["any"]=r.any;o["weekdays"]=r.weekdays;o["startMinute"]=r.startMinute;o["endMinute"]=r.endMinute;
   o["holdSeconds"]=r.holdSeconds;o["delaySeconds"]=r.delaySeconds;
   o["cooldownSeconds"]=r.cooldownSeconds;o["repeatSeconds"]=r.repeatSeconds;
@@ -145,7 +175,7 @@ void loadRules(){
   if(f.size()>10000){f.close();continue;}
   DynamicJsonDocument doc(8192);auto error=deserializeJson(doc,f);f.close();
   Rule candidate[MAX_RULES];size_t count=0;
-  if(!error&&doc["version"]==1&&parseRules(doc["rules"],candidate,count)){
+  if(!error&&(doc["version"]==1||doc["version"]==2)&&parseRules(doc["rules"],candidate,count)){
    ruleCount=count;for(size_t i=0;i<count;++i){rules[i]=candidate[i];runtime[i]=Runtime();failures[i]=0;suspended[i]=false;}
    rulesLoaded=true;return;
   }
@@ -335,9 +365,10 @@ void saveRules(){
  DynamicJsonDocument doc(8192);if(!readBody(doc))return;
  Rule candidate[MAX_RULES];size_t count=0;
  if(!parseRules(doc["rules"],candidate,count)){jsonReply(400,"invalid_rules");return;}
- doc.clear();doc["version"]=1;rulesJson(doc.createNestedArray("rules"),candidate,count);
+ doc.clear();doc["version"]=2;rulesJson(doc.createNestedArray("rules"),candidate,count);
  if(doc.overflowed()){jsonReply(500,"low_memory");return;}
  String body;serializeJson(doc,body);
+ if(body.length()>10000){jsonReply(400,"invalid_rules");return;}
  if(!writeFile("/TUYA.JSON",body)){jsonReply(500,"save_failed");return;}
  ruleCount=count;for(size_t i=0;i<MAX_RULES;++i){rules[i]=candidate[i];runtime[i]=Runtime();failures[i]=0;suspended[i]=false;}
  rulesLoaded=true;verifyRule=-1;jsonReply(200,"saved");

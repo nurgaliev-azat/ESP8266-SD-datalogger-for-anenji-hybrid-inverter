@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <math.h>
 #include <string.h>
+#include "tuya_expression.h"
 namespace TuyaRules {
 constexpr size_t MAX_RULES=4,MAX_CONDITIONS=3,SENSOR_COUNT=10;
 struct Condition {
@@ -13,7 +14,8 @@ struct Condition {
 // Sensors: PV W, load W, grid W, battery %, battery V, grid V,
 // PV V, load V, battery charge W, battery discharge W.
 struct Rule {
- char name[41]={},device[65]={},code[41]={},value[67]={};
+ char name[81]={},device[65]={},code[41]={},value[67]={};
+ char expression[TuyaExpression::MAX_LENGTH+1]={};
  bool enabled=false,any=false;
  uint8_t conditionCount=0,weekdays=127;
  uint16_t startMinute=0,endMinute=0;
@@ -24,6 +26,7 @@ struct Runtime {
  bool conditionOn[MAX_CONDITIONS]={};
  bool active=false,timing=false,fired=false,hasRun=false;
  uint32_t since=0,lastRun=0;
+ uint16_t expressionStates=0;
 };
 inline bool inWindow(const Rule&r,uint8_t weekday,uint16_t minute){
  if(weekday>6||minute>1439)return false;
@@ -51,14 +54,18 @@ inline bool sameTarget(const Rule&a,const Rule&b){
  return strcmp(a.device,b.device)==0&&strcmp(a.code,b.code)==0;
 }
 inline void resetPending(Runtime&s){
- s.active=false;s.timing=false;s.fired=false;
+ s.active=false;s.timing=false;s.fired=false;s.expressionStates=0;
  for(size_t c=0;c<MAX_CONDITIONS;++c)s.conditionOn[c]=false;
 }
 inline bool update(const Rule&r,Runtime&s,const float values[SENSOR_COUNT],
  bool fresh,bool clockValid,uint8_t weekday,uint16_t minute,uint32_t now,
  bool blocked=false){
  bool match=r.enabled&&fresh&&clockValid&&inWindow(r,weekday,minute)&&!blocked;
- if(match){
+ bool keepExpressionStates=false;
+ if(match&&r.expression[0]){
+  auto result=TuyaExpression::evaluate(r.expression,values,weekday,minute,s.expressionStates);
+  s.expressionStates=result.states;keepExpressionStates=result.valid;match=result.valid&&result.value;
+ }else if(match){
   bool combined=!r.any;
   for(size_t c=0;c<r.conditionCount;++c){
    const Condition&cond=r.conditions[c];
@@ -69,7 +76,11 @@ inline bool update(const Rule&r,Runtime&s,const float values[SENSOR_COUNT],
   // No numeric conditions means a schedule-only rule.
   match=r.conditionCount?combined:true;
  }
- if(!match){resetPending(s);return false;}
+ if(!match){
+  uint16_t states=s.expressionStates;resetPending(s);
+  if(keepExpressionStates)s.expressionStates=states;
+  return false;
+ }
  s.active=true;
  if(!s.timing){s.timing=true;s.since=now;}
  const uint32_t wait=r.holdSeconds+r.delaySeconds;
