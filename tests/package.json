@@ -1,0 +1,1 @@
+{"private":true,"scripts":{"test":"node dashboard_test.cjs && node tuya_page_test.cjs"},"devDependencies":{"linkedom":"0.18.12"}}

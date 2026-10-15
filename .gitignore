@@ -3,3 +3,11 @@
 *.map
 build/
 arduino_secrets.h
+
+node_modules/
+TUYA.JSON*
+TUYA.CA*
+*secrets*
+devices.json
+tuya-raw.json
+snapshot.json

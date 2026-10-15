@@ -38,7 +38,7 @@ struct WebSettings{
 };
 
 using WebLiveCallback=void (*)(WebLiveData&);
-using WebSamplesCallback=size_t (*)(WebSample*,size_t);
+using WebSamplesCallback=size_t (*)(WebSample*,size_t,size_t);
 using WebHistoryCallback=size_t (*)(
   WebHistoryHour*,size_t,const String&,uint16_t,uint8_t,uint8_t);
 using WebSettingsCallback=bool (*)(const WebSettings&);
@@ -225,7 +225,7 @@ button.active{background:#326de8;color:white}
 </style></head><body><main class="wrap">
 <section class="block status">
 <div class="top"><div><b data-i18n="statusLabel">Status:</b> <span id="status">Waiting for data</span></div>
-<div class="top-actions"><div class="language-switch" role="group" aria-label="Language"><button id="langEn" type="button">EN</button><button id="langRu" type="button">RU</button></div><a class="settings" data-i18n="settings" href="/settings">Settings</a></div></div>
+<div class="top-actions"><div class="language-switch" role="group" aria-label="Language"><button id="langEn" type="button">EN</button><button id="langRu" type="button">RU</button></div><a class="settings" data-i18n="settings" href="/settings">Settings</a><a class="settings" href="/tuya" data-i18n="tuya">Tuya Cloud</a></div></div>
 <div id="languageMessage" role="status" class="notice"></div>
 <div><b data-i18n="inverterIp">Inverter IP:</b> <span id="inverterIp">—</span></div>
 </section>
@@ -322,7 +322,7 @@ const format=(n,d=2)=>Number(n||0).toFixed(d);
 const pad=n=>String(n).padStart(2,'0');
 
 
-const translations={"en":{"statusLabel":"Status:","inverterIp":"Inverter IP:","settings":"Settings","grid":"Grid","battery":"Battery","pv":"PV","load":"Load","charge":"Battery charge","discharge":"Battery discharge","w":"W","v":"V","kw":"kW","kwh":"kWh","totalEnergy":"Total energy","totalsNotice":"Totals for the current calendar day, including the current hour.","dayTitle":"Power — current day","historyTitle":"Accumulated energy history","today":"Today","hour":"Hours","day":"Days","month":"Months","year":"Years","previous":"Previous period","next":"Next period","mode":"Mode","waiting":"Waiting for data","noFaults":"No faults","noWarnings":"No warnings","saveError":"Could not save language. Please try again.","languageLabel":"Interface language"},"ru":{"statusLabel":"Статус:","inverterIp":"IP инвертора:","settings":"Настройки","grid":"Сеть","battery":"Батарея","pv":"Солнечные панели","load":"Нагрузка","charge":"Заряд батареи","discharge":"Разряд батареи","w":"Вт","v":"В","kw":"кВт","kwh":"кВт·ч","totalEnergy":"Суммарная энергия","totalsNotice":"Итоги за текущий календарный день, включая текущий час.","dayTitle":"Мощность — текущий день","historyTitle":"История накопленной энергии","today":"Сегодня","hour":"Часы","day":"Дни","month":"Месяцы","year":"Годы","previous":"Предыдущий период","next":"Следующий период","mode":"Режим","waiting":"Ожидание данных","noFaults":"Неполадок нет","noWarnings":"Предупреждений нет","saveError":"Не удалось сохранить язык. Попробуйте ещё раз.","languageLabel":"Язык интерфейса"}};
+const translations={"en":{"statusLabel":"Status:","inverterIp":"Inverter IP:","settings":"Settings","tuya":"Tuya Cloud","grid":"Grid","battery":"Battery","pv":"PV","load":"Load","charge":"Battery charge","discharge":"Battery discharge","w":"W","v":"V","kw":"kW","kwh":"kWh","totalEnergy":"Total energy","totalsNotice":"Totals for the current calendar day, including the current hour.","dayTitle":"Power — current day","historyTitle":"Accumulated energy history","today":"Today","hour":"Hours","day":"Days","month":"Months","year":"Years","previous":"Previous period","next":"Next period","mode":"Mode","waiting":"Waiting for data","noFaults":"No faults","noWarnings":"No warnings","saveError":"Could not save language. Please try again.","languageLabel":"Interface language"},"ru":{"statusLabel":"Статус:","inverterIp":"IP инвертора:","settings":"Настройки","tuya":"Облако Tuya","grid":"Сеть","battery":"Батарея","pv":"Солнечные панели","load":"Нагрузка","charge":"Заряд батареи","discharge":"Разряд батареи","w":"Вт","v":"В","kw":"кВт","kwh":"кВт·ч","totalEnergy":"Суммарная энергия","totalsNotice":"Итоги за текущий календарный день, включая текущий час.","dayTitle":"Мощность — текущий день","historyTitle":"История накопленной энергии","today":"Сегодня","hour":"Часы","day":"Дни","month":"Месяцы","year":"Годы","previous":"Предыдущий период","next":"Следующий период","mode":"Режим","waiting":"Ожидание данных","noFaults":"Неполадок нет","noWarnings":"Предупреждений нет","saveError":"Не удалось сохранить язык. Попробуйте ещё раз.","languageLabel":"Язык интерфейса"}};
 let language='en',languageSaving=false,languageRevision=0;
 const t=key=>translations[language][key]||key;
 function applyLanguage(next){
@@ -754,15 +754,16 @@ void webBeginJsonArray(){
 }
 
 void webHandleSamples(){
-  static WebSample points[288];
-  size_t count=webSamplesCallback?
-    webSamplesCallback(points,288):0;
-
+  WebSample points[12];
+  size_t offset=0;
   webBeginJsonArray();
-  for(size_t i=0;i<count;++i){
+  while(webSamplesCallback){
+   size_t count=webSamplesCallback(points,12,offset);
+   if(!count)break;
+   for(size_t i=0;i<count;++i){
     String j;
     j.reserve(115);
-    if(i)j+=',';
+    if(offset+i)j+=',';
     j+=F("{\"minute\":");
     j+=String(points[i].minuteOfDay);
     j+=F(",\"grid\":");
@@ -778,6 +779,9 @@ void webHandleSamples(){
     j+='}';
     anenjiWebServer.sendContent(j);
     yield();
+  }
+   offset+=count;
+   if(count<12)break;
   }
   anenjiWebServer.sendContent("]");
   anenjiWebServer.sendContent("");

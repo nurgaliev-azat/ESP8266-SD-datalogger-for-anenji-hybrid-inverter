@@ -89,13 +89,18 @@ StoredRecord dayRecords[288];
 bool dayValid[288];
 
 void fillWebLiveData(WebLiveData& data);
-size_t getTodaySamples(WebSample* output,size_t maxSamples);
+size_t getTodaySamples(WebSample* output,size_t maxSamples,size_t offset);
 size_t getHistoryForWeb(WebHistoryHour* output,size_t maxRecords,
                         const String& scale,uint16_t year,
                         uint8_t month,uint8_t day);
 bool saveBucket();
 bool saveSettings(const WebSettings& settings);
 bool saveLanguage(const String& language);
+void tuyaBegin();
+void tuyaLoop();
+void tuyaRegisterWeb();
+uint32_t tuyaMeasurementMs=0;
+bool tuyaHasMeasurement=false;
 
 uint16_t crc16Modbus(const uint8_t* data,size_t length){
   uint16_t crc=0xFFFF;
@@ -253,6 +258,7 @@ void startSetupAccessPoint(){
   WiFi.softAP("Anenji-setup","12345678");
   beginWebServer(fillWebLiveData,getTodaySamples,getHistoryForWeb,
                  saveSettings,saveLanguage,appSettings,true);
+  tuyaRegisterWeb();
   Serial.println(WiFi.softAPIP());
 }
 
@@ -896,6 +902,8 @@ void processPowerRegisters(uint16_t start,uint16_t count,
   currentModeCode=mode;
   currentMode=workingModeName(mode);
   modeRead=true;
+  tuyaMeasurementMs=millis();
+  tuyaHasMeasurement=true;
   currentStatus="Data updated";
   currentUpdateTime=currentDateTimeString();
 }
@@ -1100,17 +1108,18 @@ size_t getHistoryForWeb(WebHistoryHour* output,size_t maxRecords,
   return count;
 }
 
-size_t getTodaySamples(WebSample* output,size_t maxSamples){
+size_t getTodaySamples(WebSample* output,size_t maxSamples,size_t offset){
   if(!validClock())return 0;
   time_t now=time(nullptr);
   struct tm t;
   localtime_r(&now,&t);
-  readDay(t.tm_year+1900,t.tm_mon+1,t.tm_mday);
+  if(offset==0)readDay(t.tm_year+1900,t.tm_mon+1,t.tm_mday);
 
-  size_t result=0;
+  size_t result=0,seen=0;
   for(size_t i=0;i<288&&result<maxSamples;++i){
     if(!dayValid[i])continue;
     if(bucketHasMeasurement&&dayRecords[i].slot==activeSlot)  continue;
+    if(seen++<offset)continue;
     WebSample& p=output[result++];
     p={};
     p.timestamp=dayRecords[i].slot*FIVE_MINUTES;
@@ -1224,6 +1233,8 @@ void restoreCurrentBucket(){
     record.wh[3],record.wh[4]);
 }
 
+#include "tuya_cloud.h"
+
 void setup(){
   Serial.begin(115200);
   delay(1000);
@@ -1235,6 +1246,7 @@ void setup(){
 
   SPI.begin();
   sdReady=SD.begin(SD_CS_PIN);
+  tuyaBegin();
   Serial.printf("[SD] При запуске: %s, CS=D4\n",
               sdReady ? "карта доступна" : "карта недоступна");
 
@@ -1256,6 +1268,7 @@ restoreCurrentBucket();
   tcpServer.begin();
   beginWebServer(fillWebLiveData,getTodaySamples,getHistoryForWeb,
                  saveSettings,saveLanguage,appSettings,false);
+  tuyaRegisterWeb();
 
   Serial.printf("Резерв EEPROM: %u пятиминуток\n",
                 static_cast<unsigned>(EEPROM_RECORD_COUNT));
@@ -1295,5 +1308,6 @@ void loop(){
   }
 
   if(validClock())closeElapsedBucket(time(nullptr));
+  tuyaLoop();
   delay(2);
 }
