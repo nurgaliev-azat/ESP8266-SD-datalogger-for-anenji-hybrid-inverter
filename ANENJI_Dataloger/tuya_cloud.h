@@ -8,6 +8,7 @@
 #include <ctype.h>
 #include <sys/time.h>
 #include "tuya_rules.h"
+#include "tuya_devices.h"
 
 namespace TuyaCloud {
 using namespace TuyaRules;
@@ -27,6 +28,11 @@ uint32_t bootMs=0,lastTick=0,lastAttempt=0;
 bool attempted=false,testRequested=false,rulesLoaded=false;
 uint8_t failures[MAX_RULES]={};
 bool suspended[MAX_RULES]={};
+struct DeviceJob {
+ bool queued=false;uint32_t id=0,started=0;uint8_t attempts=0;
+ char uid[65]={},cursor[TuyaDevices::MAX_CURSOR+1]={};
+ const char*status="idle";String error;
+} deviceJob;
 int verifyRule=-1;uint8_t verifyAttempts=0;uint32_t verifyAfter=0;
 const char* const HOSTS[]={"openapi.tuyacn.com","openapi.tuyaus.com",
  "openapi-ueaz.tuyaus.com","openapi.tuyaeu.com","openapi-weaz.tuyaeu.com",
@@ -53,6 +59,7 @@ bool saveCredentials(const Credentials&next){
  Credentials old;EEPROM.get(CREDENTIAL_OFFSET,old);
  EEPROM.put(CREDENTIAL_OFFSET,next);
  if(!EEPROM.commit()){EEPROM.put(CREDENTIAL_OFFSET,old);return false;}
+ deviceJob.queued=false;deviceJob.status="idle";deviceJob.error="";
  credentials=next;accessToken="";tokenExpires=0;verifyRule=-1;attempted=false;
  for(size_t i=0;i<MAX_RULES;++i){runtime[i]=Runtime();failures[i]=0;suspended[i]=false;}
  state=credentials.enabled?"ready":"disabled";
@@ -193,8 +200,19 @@ String sign(const String&text){
  br_hmac_init(&ctx,&key,0);br_hmac_update(&ctx,text.c_str(),text.length());br_hmac_out(&ctx,result);
  for(size_t i=0;i<32;++i)snprintf(hex+i*2,3,"%02X",result[i]);return String(hex);
 }
+class LimitedCloudStream:public Stream {
+ Stream&source;size_t consumed=0,maximum;
+ public:
+ LimitedCloudStream(Stream&s,size_t limit):source(s),maximum(limit){setTimeout(3500);}
+ int available()override{return consumed<maximum?source.available():0;}
+ int read()override{if(consumed>=maximum)return -1;int value=source.read();if(value>=0)++consumed;return value;}
+ int peek()override{return consumed<maximum?source.peek():-1;}
+ void flush()override{}
+ size_t write(uint8_t)override{return 0;}
+ bool exhausted()const{return consumed>=maximum;}
+};
 // Every call validates the server chain and hostname. No insecure TLS fallback.
-bool request(const char*method,const String&path,const String&body,bool tokenRequest,JsonDocument&reply){
+bool request(const char*method,const String&path,const String&body,bool tokenRequest,JsonDocument&reply,JsonVariantConst responseFilter=JsonVariantConst(),size_t maxResponse=4096){
  if(WiFi.status()!=WL_CONNECTED||!validClock()){state="offline";return false;}
  if(!sdReady){state="sd_required";return false;}
  if(ESP.getFreeHeap()<29000||ESP.getMaxFreeBlockSize()<18000){state="low_memory";return false;}
@@ -217,9 +235,13 @@ bool request(const char*method,const String&path,const String&body,bool tokenReq
  if(body.length())http.addHeader("Content-Type","application/json");
  int status=http.sendRequest(method,body);
  if(status!=200){state=status<0?"tls_or_network_error":"http_error";http.end();return false;}
- int length=http.getSize();if(length>4096){state="reply_too_large";http.end();return false;}
- auto error=deserializeJson(reply,http.getStream());http.end();
- if(error){state="invalid_reply";return false;}
+ int length=http.getSize();if(length>static_cast<int>(maxResponse)){state="reply_too_large";http.end();return false;}
+ LimitedCloudStream stream(http.getStream(),maxResponse);
+ DeserializationError error;
+ if(responseFilter.isNull())error=deserializeJson(reply,stream);
+ else error=deserializeJson(reply,stream,DeserializationOption::Filter(responseFilter));
+ bool exhausted=stream.exhausted();http.end();
+ if(error){state=exhausted?"reply_too_large":error==DeserializationError::NoMemory?"low_memory":"invalid_reply";return false;}
  if(reply["success"]!=true){
   // Never display tokens, secrets, response bodies or untrusted cloud messages.
   state="api_error";
@@ -238,6 +260,51 @@ bool ensureToken(){
  uint32_t seconds=reply["result"]["expire_time"]|0UL;
  if(!token[0]||strlen(token)>256||seconds<60||seconds>86400){state="invalid_reply";return false;}
  accessToken=token;tokenExpires=time(nullptr)+seconds;state="connected";return true;
+}
+void expireDeviceJob(){
+ if(deviceJob.queued&&uint32_t(millis()-deviceJob.started)>120000){
+  deviceJob.queued=false;deviceJob.status="error";deviceJob.error="device_timeout";
+ }
+}
+bool loadDeviceProfile(JsonDocument&profile){
+ if(!sdReady)return false;
+ for(const char*path:{"/TUYA.ACC","/TUYA.ACC.BAK"}){
+  File file=SD.open(path,FILE_READ);if(!file)continue;
+  if(file.size()>512){file.close();continue;}
+  auto error=deserializeJson(profile,file);file.close();
+  if(!error&&String(profile["clientId"]|"")==credentials.clientId&&
+     profile["region"].as<unsigned>()==credentials.region&&
+     TuyaDevices::identifier(profile["uid"]|"",64))return true;
+  profile.clear();
+ }
+ return false;
+}
+void deviceStep(){
+ if(!deviceJob.queued)return;
+ lastAttempt=millis();attempted=true;
+ if(accessToken.isEmpty()||time(nullptr)+60>=tokenExpires){
+  if(!ensureToken()&&++deviceJob.attempts>=3){deviceJob.queued=false;deviceJob.status="error";deviceJob.error=state;}
+  return;
+ }
+ deviceJob.status="loading";
+ DynamicJsonDocument responseFilter(512),reply(1536);TuyaDevices::filter(responseFilter);
+ bool ok=request("GET",TuyaDevices::path(deviceJob.uid,deviceJob.cursor),"",false,reply,responseFilter.as<JsonVariantConst>(),24576);
+ if(!ok){
+  deviceJob.error=state;
+  // Retry only when a token was invalidated. Other errors are actionable and require a new click.
+  if(accessToken.isEmpty()&&++deviceJob.attempts<3){deviceJob.status="queued";return;}
+  deviceJob.queued=false;deviceJob.status="error";return;
+ }
+ DynamicJsonDocument page(2048);
+ if(!TuyaDevices::sanitize(reply.as<JsonVariantConst>(),page,deviceJob.uid,deviceJob.cursor,
+    credentials.clientId,credentials.region,static_cast<uint32_t>(time(nullptr)))){
+  deviceJob.queued=false;deviceJob.status="error";deviceJob.error="invalid_reply";return;
+ }
+ String text;serializeJson(page,text);
+ if(!writeFile("/TUYA.DEV",text)){
+  deviceJob.queued=false;deviceJob.status="error";deviceJob.error="save_failed";return;
+ }
+ deviceJob.queued=false;deviceJob.status="done";deviceJob.error="";
 }
 bool sendRule(size_t index){
  const Rule&r=rules[index];
@@ -265,8 +332,9 @@ bool freshData(){
 }
 void tick(){
  const uint32_t now=millis();if(uint32_t(now-lastTick)<1000)return;lastTick=now;
+ expireDeviceJob();
  loadRules();
- if(!credentials.enabled&&!testRequested){
+ if(!credentials.enabled&&!testRequested&&!deviceJob.queued){
   for(size_t i=0;i<ruleCount;++i)resetPending(runtime[i]);
   verifyRule=-1;state="disabled";return;
  }
@@ -285,7 +353,7 @@ void tick(){
   float(currentBatteryPercent),currentBatteryVoltage,currentGridVoltage,currentPvVoltage,
   currentLoadVoltage,currentPower.batteryCharge,currentPower.batteryDischarge};
  bool fresh=freshData();bool due[MAX_RULES]={};
- evaluate(rules,runtime,ruleCount,values,fresh,true,(local.tm_wday+6)%7,
+ evaluate(rules,runtime,ruleCount,values,fresh&&credentials.enabled,true,(local.tm_wday+6)%7,
   local.tm_hour*60+local.tm_min,now,due);
  for(size_t i=0;i<ruleCount;++i){
   if(!runtime[i].active){failures[i]=0;suspended[i]=false;}
@@ -297,7 +365,10 @@ void tick(){
   testRequested=false;lastAttempt=now;attempted=true;accessToken="";tokenExpires=0;
   if(ensureToken())state="connected";return;
  }
- if(!fresh){state="stale_data";return;}
+ if(!fresh){
+  if(deviceJob.queued&&verifyRule<0)deviceStep();else state="stale_data";
+  return;
+ }
  if(state=="stale_data"||state=="offline"||state=="sd_required"||state=="warming_up")state="ready";
  if(verifyRule>=0){
   if(uint32_t(now-verifyAfter)<15000)return;
@@ -321,6 +392,7 @@ void tick(){
   if(!sendRule(i)&&++failures[i]>=3){suspended[i]=true;state="retry_limit";}
   return;
  }
+ if(deviceJob.queued)deviceStep();
 }
 void jsonReply(int status,const char*code){
  DynamicJsonDocument doc(256);doc["status"]=code;String body;serializeJson(doc,body);
@@ -335,6 +407,60 @@ bool readBody(JsonDocument&doc){
  if(body.length()>10000||deserializeJson(doc,body)){jsonReply(400,"invalid_json");return false;}
  return true;
 }
+void getDevices(){
+ expireDeviceJob();
+ DynamicJsonDocument doc(3072),profile(512);
+ doc["status"]=deviceJob.status;doc["jobId"]=deviceJob.id;doc["error"]=deviceJob.error;
+ doc["uid"]="";
+ if(loadDeviceProfile(profile)){
+  const char*uid=profile["uid"];doc["uid"]=uid;
+  File file=SD.open("/TUYA.DEV",FILE_READ);
+  if(file){
+   DynamicJsonDocument page(2048);bool valid=file.size()<=4096&&!deserializeJson(page,file);file.close();
+   if(valid&&page["version"]==1&&String(page["uid"]|"")==uid&&
+      String(page["clientId"]|"")==credentials.clientId&&page["region"].as<unsigned>()==credentials.region){
+    // Construct the response explicitly rather than echoing arbitrary on-card JSON.
+    JsonObject output=doc.createNestedObject("page");
+    output["uid"]=uid;output["updatedAt"]=page["updatedAt"];output["requestCursor"]=page["requestCursor"];
+    output["nextCursor"]=page["nextCursor"];output["hasMore"]=page["hasMore"];output["total"]=page["total"];
+    JsonArray devices=output.createNestedArray("devices");
+    size_t count=0;for(JsonObjectConst item:page["devices"].as<JsonArrayConst>()){
+     if(++count>TuyaDevices::PAGE_SIZE||!TuyaDevices::identifier(item["id"]|"",64))break;
+     JsonObject out=devices.createNestedObject();out["id"]=item["id"];out["name"]=item["name"];
+     out["category"]=item["category"];out["online"]=item["online"];
+    }
+   }
+  }
+ }
+ if(doc.overflowed()){jsonReply(500,"low_memory");return;}
+ String body;serializeJson(doc,body);anenjiWebServer.sendHeader("Cache-Control","no-store");
+ anenjiWebServer.send(200,"application/json; charset=utf-8",body);
+}
+void queueDevices(){
+ expireDeviceJob();DynamicJsonDocument doc(1024);if(!readBody(doc))return;
+ const char*uid=doc["uid"]|"",*cursor=doc["cursor"]|"";
+ if(!TuyaDevices::identifier(uid,64)||!TuyaDevices::cursorValid(cursor)){jsonReply(400,"invalid_uid_or_cursor");return;}
+ if(deviceJob.queued){jsonReply(409,"device_busy");return;}
+ if(!credentials.clientId[0]||!credentials.secret[0]){jsonReply(400,"credentials_required");return;}
+ if(!sdReady){jsonReply(503,"sd_required");return;}
+ // Later pages must belong to the current account/cache and match its continuation token.
+ if(cursor[0]){
+  File file=SD.open("/TUYA.DEV",FILE_READ);DynamicJsonDocument page(2048);
+  bool valid=file&&file.size()<=4096&&!deserializeJson(page,file);if(file)file.close();
+  if(!valid||String(page["uid"]|"")!=uid||String(page["clientId"]|"")!=credentials.clientId||
+    page["region"].as<unsigned>()!=credentials.region||page["hasMore"]!=true||String(page["nextCursor"]|"")!=cursor){jsonReply(409,"device_refresh_required");return;}
+ }
+ DynamicJsonDocument profile(512);profile["uid"]=uid;profile["clientId"]=credentials.clientId;profile["region"]=credentials.region;
+ String text;serializeJson(profile,text);
+ DynamicJsonDocument previous(512);
+ bool unchanged=loadDeviceProfile(previous)&&String(previous["uid"]|"")==uid;
+ if(!unchanged&&!writeFile("/TUYA.ACC",text)){jsonReply(500,"save_failed");return;}
+ strlcpy(deviceJob.uid,uid,sizeof(deviceJob.uid));strlcpy(deviceJob.cursor,cursor,sizeof(deviceJob.cursor));
+ deviceJob.started=millis();++deviceJob.id;deviceJob.attempts=0;deviceJob.queued=true;deviceJob.status="queued";deviceJob.error="";
+ DynamicJsonDocument response(256);response["status"]="queued";response["jobId"]=deviceJob.id;
+ String body;serializeJson(response,body);anenjiWebServer.send(202,"application/json; charset=utf-8",body);
+}
+
 void getConfig(){
  DynamicJsonDocument doc(8192);
  doc["language"]=appSettings.language;doc["enabled"]=bool(credentials.enabled);
@@ -388,11 +514,22 @@ void saveCA(){
 #include "tuya_page.h"
 void tuyaBegin(){TuyaCloud::bootMs=millis();TuyaCloud::loadCredentials();TuyaCloud::loadRules();}
 void tuyaLoop(){TuyaCloud::tick();}
+void tuyaServiceDevices(){
+ // No rule evaluation/commands while waiting for an inverter TCP connection.
+ using namespace TuyaCloud;expireDeviceJob();
+ const uint32_t now=millis();
+ if(!deviceJob.queued||verifyRule>=0||!credentials.clientId[0]||!credentials.secret[0]||
+   !sdReady||!validClock()||WiFi.status()!=WL_CONNECTED||uint32_t(now-bootMs)<30000||
+   (attempted&&uint32_t(now-lastAttempt)<15000))return;
+ deviceStep();
+}
 void tuyaRegisterWeb(){
  anenjiWebServer.collectHeaders("Content-Type");
  anenjiWebServer.on("/tuya",HTTP_GET,[](){anenjiWebServer.send_P(200,PSTR("text/html; charset=utf-8"),TUYA_PAGE);});
  anenjiWebServer.on("/api/tuya",HTTP_GET,TuyaCloud::getConfig);
  anenjiWebServer.on("/api/tuya/config",HTTP_POST,TuyaCloud::saveConfig);
+ anenjiWebServer.on("/api/tuya/devices",HTTP_GET,TuyaCloud::getDevices);
+ anenjiWebServer.on("/api/tuya/devices",HTTP_POST,TuyaCloud::queueDevices);
  anenjiWebServer.on("/api/tuya/rules",HTTP_POST,TuyaCloud::saveRules);
  anenjiWebServer.on("/api/tuya/ca",HTTP_POST,TuyaCloud::saveCA);
  anenjiWebServer.on("/api/tuya/test",HTTP_POST,[](){

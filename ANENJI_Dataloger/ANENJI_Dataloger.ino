@@ -99,6 +99,7 @@ bool saveLanguage(const String& language);
 void tuyaBegin();
 void tuyaLoop();
 void tuyaRegisterWeb();
+void tuyaServiceDevices();
 uint32_t tuyaMeasurementMs=0;
 bool tuyaHasMeasurement=false;
 
@@ -330,6 +331,7 @@ bool ensureInverterConnection(){
       return true;
     }
     handleWebServer();
+    tuyaServiceDevices(); // Manual catalog work can progress while the inverter is disconnected.
     delay(10);
   }
   return false;
