@@ -29,7 +29,7 @@ bool attempted=false,testRequested=false,rulesLoaded=false;
 uint8_t failures[MAX_RULES]={};
 bool suspended[MAX_RULES]={};
 struct DeviceJob {
- bool queued=false;uint32_t id=0,started=0;uint8_t attempts=0;
+ bool queued=false,functions=false;uint32_t id=0,started=0;uint8_t attempts=0;
  char uid[65]={},cursor[TuyaDevices::MAX_CURSOR+1]={};
  const char*status="idle";String error;
 } deviceJob;
@@ -287,13 +287,34 @@ void deviceStep(){
   return;
  }
  deviceJob.status="loading";
- DynamicJsonDocument responseFilter(512),reply(1536);TuyaDevices::filter(responseFilter);
- bool ok=request("GET",TuyaDevices::path(deviceJob.uid,deviceJob.cursor),"",false,reply,responseFilter.as<JsonVariantConst>(),24576);
+ DynamicJsonDocument responseFilter(512),reply(deviceJob.functions?4096:1536);
+ String path;
+ if(deviceJob.functions){
+  responseFilter["success"]=true;responseFilter["code"]=true;
+  JsonObject f=responseFilter["result"]["functions"][0].to<JsonObject>();
+  f["code"]=true;f["name"]=true;f["type"]=true;f["values"]=true;
+  path="/v1.2/iot-03/devices/"+String(deviceJob.cursor)+"/specification";
+ }else{TuyaDevices::filter(responseFilter);path=TuyaDevices::path(deviceJob.uid,deviceJob.cursor);}
+ bool ok=request("GET",path,"",false,reply,responseFilter.as<JsonVariantConst>(),24576);
  if(!ok){
   deviceJob.error=state;
   // Retry only when a token was invalidated. Other errors are actionable and require a new click.
   if(accessToken.isEmpty()&&++deviceJob.attempts<3){deviceJob.status="queued";return;}
   deviceJob.queued=false;deviceJob.status="error";return;
+ }
+ if(deviceJob.functions){
+  JsonArrayConst functions=reply["result"]["functions"].as<JsonArrayConst>();
+  if(functions.isNull()){deviceJob.queued=false;deviceJob.status="error";deviceJob.error="invalid_reply";return;}
+  for(JsonObjectConst f:functions){
+   if(!TuyaDevices::identifier(f["code"]|"",40)||!f["type"].is<const char*>()||!f["values"].is<const char*>()){
+    deviceJob.queued=false;deviceJob.status="error";deviceJob.error="invalid_reply";return;
+   }
+  }
+  reply.remove("code");reply["uid"]=deviceJob.uid;reply["device"]=deviceJob.cursor;
+  reply["clientId"]=credentials.clientId;reply["region"]=credentials.region;
+  String text;serializeJson(reply,text);
+  bool saved=!reply.overflowed()&&writeFile("/TUYA.FUN",text);
+  deviceJob.queued=false;deviceJob.status=saved?"done":"error";deviceJob.error=saved?"":"save_failed";return;
  }
  DynamicJsonDocument page(2048);
  if(!TuyaDevices::sanitize(reply.as<JsonVariantConst>(),page,deviceJob.uid,deviceJob.cursor,
@@ -455,10 +476,35 @@ void queueDevices(){
  DynamicJsonDocument previous(512);
  bool unchanged=loadDeviceProfile(previous)&&String(previous["uid"]|"")==uid;
  if(!unchanged&&!writeFile("/TUYA.ACC",text)){jsonReply(500,"save_failed");return;}
- strlcpy(deviceJob.uid,uid,sizeof(deviceJob.uid));strlcpy(deviceJob.cursor,cursor,sizeof(deviceJob.cursor));
+ deviceJob.functions=false;strlcpy(deviceJob.uid,uid,sizeof(deviceJob.uid));strlcpy(deviceJob.cursor,cursor,sizeof(deviceJob.cursor));
  deviceJob.started=millis();++deviceJob.id;deviceJob.attempts=0;deviceJob.queued=true;deviceJob.status="queued";deviceJob.error="";
  DynamicJsonDocument response(256);response["status"]="queued";response["jobId"]=deviceJob.id;
  String body;serializeJson(response,body);anenjiWebServer.send(202,"application/json; charset=utf-8",body);
+}
+
+void queueFunctions(){
+ expireDeviceJob();DynamicJsonDocument doc(512),profile(512);if(!readBody(doc))return;
+ const char*uid=doc["uid"]|"",*device=doc["device"]|"";
+ if(!TuyaDevices::identifier(device,64)||!loadDeviceProfile(profile)||String(profile["uid"]|"")!=uid){jsonReply(400,"device_refresh_required");return;}
+ if(deviceJob.queued){jsonReply(409,"device_busy");return;}
+ if(!credentials.clientId[0]||!credentials.secret[0]){jsonReply(400,"credentials_required");return;}
+ deviceJob.functions=true;strlcpy(deviceJob.uid,uid,sizeof(deviceJob.uid));strlcpy(deviceJob.cursor,device,sizeof(deviceJob.cursor));
+ deviceJob.started=millis();++deviceJob.id;deviceJob.attempts=0;deviceJob.queued=true;deviceJob.status="queued";deviceJob.error="";
+ DynamicJsonDocument response(256);response["jobId"]=deviceJob.id;
+ String body;serializeJson(response,body);anenjiWebServer.send(202,"application/json",body);
+}
+void getFunctions(){
+ expireDeviceJob();DynamicJsonDocument doc(6144),profile(512);
+ if(loadDeviceProfile(profile)){
+  File file=SD.open("/TUYA.FUN",FILE_READ);
+  bool valid=file&&file.size()<=8192&&!deserializeJson(doc,file);if(file)file.close();
+  if(!valid||String(doc["uid"]|"")!=String(profile["uid"]|"")||String(doc["clientId"]|"")!=credentials.clientId||doc["region"].as<unsigned>()!=credentials.region)doc.clear();
+ }
+ doc.remove("clientId");doc.remove("region");
+ doc["status"]=deviceJob.functions?deviceJob.status:"idle";
+ doc["jobId"]=deviceJob.id;doc["error"]=deviceJob.functions?deviceJob.error:String("");
+ if(doc.overflowed()){jsonReply(500,"low_memory");return;}
+ String body;serializeJson(doc,body);anenjiWebServer.sendHeader("Cache-Control","no-store");anenjiWebServer.send(200,"application/json; charset=utf-8",body);
 }
 
 void getConfig(){
@@ -528,6 +574,8 @@ void tuyaRegisterWeb(){
  anenjiWebServer.on("/tuya",HTTP_GET,[](){anenjiWebServer.send_P(200,PSTR("text/html; charset=utf-8"),TUYA_PAGE);});
  anenjiWebServer.on("/api/tuya",HTTP_GET,TuyaCloud::getConfig);
  anenjiWebServer.on("/api/tuya/config",HTTP_POST,TuyaCloud::saveConfig);
+ anenjiWebServer.on("/api/tuya/functions",HTTP_GET,TuyaCloud::getFunctions);
+ anenjiWebServer.on("/api/tuya/functions",HTTP_POST,TuyaCloud::queueFunctions);
  anenjiWebServer.on("/api/tuya/devices",HTTP_GET,TuyaCloud::getDevices);
  anenjiWebServer.on("/api/tuya/devices",HTTP_POST,TuyaCloud::queueDevices);
  anenjiWebServer.on("/api/tuya/rules",HTTP_POST,TuyaCloud::saveRules);
