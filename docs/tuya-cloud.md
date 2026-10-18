@@ -156,3 +156,5 @@ npm test
 Дополнительный тест времени жизни буфера истории: `python3 tests/sample_cache_test.py` (нужен g++).
 
 Тест каталога и ошибок сценариев с имитацией SD/облака: `python3 tests/catalogue_test.py /path/to/ArduinoJson/src` (g++, ArduinoJson 6.21.5).
+
+Разделители устройств в потоковом JSON передаются отдельно от сериализации строк. Это сохраняет корректность ответа как при дописывании String (ArduinoJson 6), так и при замене String (ArduinoJson 7). Основная проверенная зависимость прошивки остаётся ArduinoJson 6.21.5.

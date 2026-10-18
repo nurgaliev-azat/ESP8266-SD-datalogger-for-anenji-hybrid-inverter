@@ -558,7 +558,9 @@ void getDevices(){
    if(!readCataloguePage(page,manifest.as<JsonVariantConst>(),i)){anenjiWebServer.client().stop();return;}
    for(JsonObjectConst item:page["devices"].as<JsonArrayConst>()){
     doc.clear();doc["id"]=item["id"];doc["name"]=item["name"];doc["category"]=item["category"];doc["online"]=item["online"];
-    text=first?"":",";serializeJson(doc,text);anenjiWebServer.sendContent(text);first=false;
+    // ArduinoJson 6 appends to String; 7 replaces it. Keep separators outside serialization.
+    if(!first)anenjiWebServer.sendContent(",");
+    text="";serializeJson(doc,text);anenjiWebServer.sendContent(text);first=false;
    }
    yield();
   }

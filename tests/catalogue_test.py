@@ -45,6 +45,15 @@ pre = r'''
 #include <map>
 #include <memory>
 #include <ctime>
+#include <type_traits>
+#include <utility>
+template<class Source,class Target,class...Args>
+size_t serializeForTest(Source&& source,Target& target,Args&&...args){
+#ifdef TEST_REPLACE_STRING
+ if constexpr(std::is_same<Target,String>::value)target.clear();
+#endif
+ return serializeJson(std::forward<Source>(source),target,std::forward<Args>(args)...);
+}
 #include "tuya_devices.h"
 #include "tuya_rules.h"
 using namespace TuyaRules;
@@ -79,13 +88,14 @@ struct Server {
  Server& client(){return *this;}void stop(){stopped=true;}
 } anenjiWebServer;
 void jsonReply(int status,const char* error){anenjiWebServer.code=status;anenjiWebServer.body=error;}
-bool failWrite=false,failCloud=false,rejectCommand=false,wrongStatus=false;int cloudRequests=0;
+bool failWrite=false,failCloud=false,rejectCommand=false,wrongStatus=false,emptyCloud=false;int cloudRequests=0;
 bool writeFile(const char* path,const String& text){if(failWrite)return false;files[path]=text;return true;}
 bool request(const char*,const String& path,const String&,bool,DynamicJsonDocument& reply,JsonVariantConst filter=JsonVariantConst(),size_t=4096){
  ++cloudRequests;if(failCloud){state="api_error";return false;}
  if(path.find("/commands")!=std::string::npos)return !deserializeJson(reply,rejectCommand?"{\"success\":true,\"result\":false}":"{\"success\":true,\"result\":true}");
  if(path.find("/status")!=std::string::npos)return !deserializeJson(reply,wrongStatus?"{\"success\":true,\"result\":[{\"code\":\"switch_1\",\"value\":false}]}":"{\"success\":true,\"result\":[{\"code\":\"switch_1\",\"value\":true}]}");
- const char* first=R"({"success":true,"result":{"has_more":true,"last_row_key":"next","list":[{"id":"d1","name":"One","local_key":"SECRET"},{"id":"d2","name":"Two"},{"id":"d3","name":"Three"}]}})";
+ if(emptyCloud)return !deserializeJson(reply,"{\"success\":true,\"result\":{\"has_more\":false,\"last_row_key\":\"\",\"list\":[]}}");
+ const char* first=R"({"success":true,"result":{"has_more":true,"last_row_key":"next","list":[{"id":"d1","name":"Реле \"One\"","local_key":"SECRET"},{"id":"d2","name":"Two"},{"id":"d3","name":"Three"}]}})";
  const char* last=R"({"success":true,"result":{"has_more":false,"last_row_key":"","list":[{"id":"d4","name":"Four"}]}})";
  return !deserializeJson(reply,path.find("last_row_key=next")!=std::string::npos?last:first,DeserializationOption::Filter(filter));
 }
@@ -138,13 +148,16 @@ int main(){
  rejectCommand=true;assert(!sendRule(0));assert(std::string(ruleErrors[0].code)=="command_rejected");suspended[0]=true;getRuleAlerts();assert(!deserializeJson(response,anenjiWebServer.body));assert(response[0]["paused"]==true);
  // Timeout exposes an error; it never publishes a partial catalogue.
  assert(beginCatalogue("uid"));nowMs+=120001;expireDeviceJob();assert(!deviceJob.queued&&deviceJob.error=="device_timeout");
+ emptyCloud=true;assert(beginCatalogue("uid"));deviceStep();getDevices();assert(!deserializeJson(response,anenjiWebServer.body));assert(response["page"]["devices"].is<JsonArray>()&&response["page"]["devices"].size()==0);
 }
 '''
 with tempfile.TemporaryDirectory() as directory:
     tmp = Path(directory)
     (tmp/'Arduino.h').write_text(arduino)
     cpp=tmp/'catalogue.cpp';binary=tmp/'catalogue'
-    cpp.write_text(pre+source[job_start:job_end]+'\n'+functions+post)
+    cpp.write_text(pre+source[job_start:job_end]+'\n'+re.sub(r'\bserializeJson\(', 'serializeForTest(', functions)+post)
     subprocess.run(['g++','-std=c++17','-I'+str(tmp),'-I'+sys.argv[1],'-I'+str(root/'ANENJI_Dataloger'),str(cpp),'-o',str(binary)],check=True)
     subprocess.run([str(binary)],check=True)
-print('PASS: first auto-load, all pages, secret filtering, SD restore, no automatic reload, atomic refresh, cloud/SD failures, timeout and scenario failure/recovery alerts')
+    subprocess.run(['g++','-std=c++17','-DTEST_REPLACE_STRING','-I'+str(tmp),'-I'+sys.argv[1],'-I'+str(root/'ANENJI_Dataloger'),str(cpp),'-o',str(binary)],check=True)
+    subprocess.run([str(binary)],check=True)
+print('PASS: first auto-load, all pages, secret filtering, SD restore, no automatic reload, atomic refresh, cloud/SD failures, timeout and scenario failure/recovery alerts; append/replace String serialization')
