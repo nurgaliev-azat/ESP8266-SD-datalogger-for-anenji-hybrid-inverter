@@ -19,6 +19,8 @@ Object.assign(dictionary.ru,{refreshDevices:'Рефреш всех устрой�
 let deviceLoading=false,deviceWatch=0,deviceGeneration=null;
 Object.assign(dictionary.en,{saveUid:'Save UID',uidSaved:'UID saved on SD'});
 Object.assign(dictionary.ru,{saveUid:'Сохранить UID',uidSaved:'UID сохранён на SD'});
+Object.assign(dictionary.en,{devicesLive:'Device list updated and saved on SD'});
+Object.assign(dictionary.ru,{devicesLive:'Список устройств обновлён и сохранён на SD'});
 const t=k=>dictionary[lang][k]||k;
 function translate(){document.documentElement.lang=lang;document.title=t('title');document.querySelectorAll('[data-t]').forEach(e=>e.textContent=t(e.dataset.t));
  const names=lang==='ru'?['Китай','Запад США','Восток США','Центральная Европа','Западная Европа','Индия','Сингапур']:['China','Western America','Eastern America','Central Europe','Western Europe','India','Singapore'];Array.from($('region').options).forEach((o,i)=>o.textContent=names[i]);}
@@ -91,7 +93,7 @@ function renderRules(){const root=$('rules');root.replaceChildren();rules.forEac
  const days=document.createElement('div');days.className='days';for(let d=0;d<7;d++){const l=document.createElement('label'),c=document.createElement('input');c.type='checkbox';c.dataset.day=d;c.checked=!!(r.weekdays&(1<<d));l.append(c,document.createTextNode(' '+t('weekday'+d)));days.append(l)}card.append(days);
  const actions=document.createElement('div');actions.className='actions';button(actions,'up',()=>mutate(()=>{if(index>0)[rules[index-1],rules[index]]=[rules[index],rules[index-1]]})).disabled=index===0;button(actions,'down',()=>mutate(()=>{if(index+1<rules.length)[rules[index+1],rules[index]]=[rules[index],rules[index+1]]})).disabled=index===rules.length-1;button(actions,'remove',()=>mutate(()=>rules.splice(index,1)),'danger');card.append(actions);root.append(card)});$('add').disabled=rules.length>=4;}
 async function api(path,body){const response=await fetch(path,body===undefined?{cache:'no-store'}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await response.json();if(!response.ok)throw Error(t(data.status||'network'));return data;}
-async function run(task){if(busy)return;busy=true;document.querySelectorAll('button').forEach(b=>b.disabled=true);try{await task()}catch(e){$('message').textContent=e.message||t('network')}finally{busy=false;document.querySelectorAll('button').forEach(b=>b.disabled=false);$('add').disabled=rules.length>=4;updateDeviceControls();}}
+async function run(task,target='message'){if(busy)return;busy=true;$(target).textContent='';document.querySelectorAll('button').forEach(b=>b.disabled=true);try{await task()}catch(e){$(target).textContent=e.message||t('network')}finally{busy=false;document.querySelectorAll('button').forEach(b=>b.disabled=false);$('add').disabled=rules.length>=4;updateDeviceControls();}}
 
 function onlineLabel(online){return t(online===true?'online':online===false?'offlineDevice':'unknownOnline')}
 function updateDeviceControls(){if($('nextDevices'))$('nextDevices').disabled=true;if($('refreshDevices'))$('refreshDevices').disabled=busy||deviceLoading;}
@@ -156,12 +158,12 @@ function applyDevicePage(page,append=false,cached=false){
  deviceCursor=page.nextCursor||'';deviceHasMore=page.hasMore===true&&!!deviceCursor;
  $('deviceMessage').textContent=(cached?t('devicesCache'):t('devicesLive'))+' · '+t('devicesLoaded')+': '+deviceCatalog.length+(Number.isFinite(page.total)?' / '+page.total:'')+(!deviceCatalog.length?' · '+t('devicesEmpty'):'');renderDeviceList();
 }
-async function watchDevices(jobId,uid){
- const watch=++deviceWatch;deviceLoading=true;updateDeviceControls();let progress=-1,started=Date.now();
+async function watchDevices(jobId,uid,watch=++deviceWatch){
+ deviceLoading=true;updateDeviceControls();let progress=-1,started=Date.now();
  try{
   while(Date.now()-started<130000){
    await new Promise(resolve=>setTimeout(resolve,2000));if(watch!==deviceWatch)return;
-   const data=await api('/api/tuya/devices?progress=1');
+   const data=await api('/api/tuya/devices?progress=1');if(watch!==deviceWatch)return;
    if($('accountUid').value.trim()!==uid||data.jobId!==jobId)throw Error(t('device_cancelled'));
    if(data.status==='error')throw Error(t(data.error||'network'));
    if(data.loaded!==progress){progress=data.loaded;started=Date.now();}
@@ -179,42 +181,47 @@ async function restoreAccountUid(){
  try{const data=await api('/api/tuya/account');if(!$('accountUid').value)$('accountUid').value=data.uid||'';}
  catch(e){$('deviceMessage').textContent=e.message||t('network');}
 }
-async function saveUid(){
+async function saveUid(watch=deviceWatch){
  const uid=$('accountUid').value.trim();if(!/^[A-Za-z0-9_-]{1,64}$/.test(uid))throw Error(t('invalid_uid_or_cursor'));
- await api('/api/tuya/account',{uid});$('deviceMessage').textContent=t('uidSaved');
+ await api('/api/tuya/account',{uid});if(watch===deviceWatch&&$('accountUid').value.trim()===uid)$('deviceMessage').textContent=t('uidSaved');
 }
 async function restoreDevices(){
+ const watch=deviceWatch;
  try{
-  const data=await api('/api/tuya/devices');
+  const data=await api('/api/tuya/devices');if(watch!==deviceWatch)return;
   if(!$('accountUid').value)$('accountUid').value=data.uid||'';
   if(data.page)applyDevicePage(data.page,false,true);
   if(data.loading&&!deviceLoading&&data.uid===$('accountUid').value.trim())
-   watchDevices(data.jobId,data.uid).catch(e=>{$('deviceMessage').textContent=e.message});
+   followDeviceJob(data.jobId,data.uid);
   else if(data.status==='error')$('deviceMessage').textContent=t(data.error);
- }catch(e){$('deviceMessage').textContent=e.message||t('network');}
+ }catch(e){if(watch===deviceWatch)$('deviceMessage').textContent=e.message||t('network');}
+}
+function followDeviceJob(jobId,uid){
+ const watch=++deviceWatch;watchDevices(jobId,uid,watch).catch(e=>{if(watch===deviceWatch)$('deviceMessage').textContent=e.message});
 }
 async function pollDevices(){
- const data=await api('/api/tuya/devices?summary=1');
+ const watch=deviceWatch;const data=await api('/api/tuya/devices?summary=1');if(watch!==deviceWatch)return;
  if(data.uid!==$('accountUid').value.trim())return;
- if(data.loading&&!deviceLoading)watchDevices(data.jobId,data.uid).catch(e=>{$('deviceMessage').textContent=e.message});
+ if(data.loading&&!deviceLoading)followDeviceJob(data.jobId,data.uid);
  else if(data.status==='error')$('deviceMessage').textContent=t(data.error);
  else if(data.hasCatalogue&&data.catalogueGeneration!==deviceGeneration)await restoreDevices();
 }
 async function loadDevices(initial=false){
  if(deviceLoading)return;
  const uid=$('accountUid').value.trim();if(!/^[A-Za-z0-9_-]{1,64}$/.test(uid))throw Error(t('invalid_uid_or_cursor'));
- const request=++deviceWatch;deviceLoading=true;updateDeviceControls();
+ const request=++deviceWatch;deviceLoading=true;$('message').textContent='';updateDeviceControls();
  try{
-  await saveUid();
+  await saveUid(request);
+  if(request!==deviceWatch||$('accountUid').value.trim()!==uid)return;
   const job=await api('/api/tuya/devices',{uid,initial});
   if(request!==deviceWatch||$('accountUid').value.trim()!==uid)return;
   if(job.status==='cached'){deviceLoading=false;await restoreDevices();return;}
-  $('deviceMessage').textContent=t('devicesLoading');await watchDevices(job.jobId,uid);
- }finally{if(request===deviceWatch){deviceLoading=false;updateDeviceControls();}}
+  $('deviceMessage').textContent=t('devicesLoading');await watchDevices(job.jobId,uid,request);
+ }catch(e){if(request===deviceWatch)throw e;}finally{if(request===deviceWatch){deviceLoading=false;updateDeviceControls();}}
 }
 
 function launchDevices(initial){loadDevices(initial).catch(e=>{$('deviceMessage').textContent=e.message});}
-$('saveUid').onclick=()=>run(saveUid);
+$('saveUid').onclick=()=>run(saveUid,'deviceMessage');
 $('deviceForm').onsubmit=e=>{e.preventDefault();launchDevices(false)};
 $('accountUid').addEventListener('change',()=>{if(/^[A-Za-z0-9_-]{1,64}$/.test($('accountUid').value.trim()))launchDevices(true)});
 $('accountUid').addEventListener('input',()=>{++deviceWatch;deviceLoading=false;deviceCatalog=[];deviceScope='';deviceCursor='';deviceHasMore=false;$('deviceMessage').textContent='';renderDeviceList();});

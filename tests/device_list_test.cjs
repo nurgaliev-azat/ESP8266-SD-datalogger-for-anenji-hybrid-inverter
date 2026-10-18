@@ -19,7 +19,7 @@ const settle=()=>new Promise(r=>setImmediate(r));const $=id=>document.getElement
 (async()=>{
  await settle();assert.equal($('accountUid').value,'account_uid');assert.equal(document.querySelectorAll('#deviceList tbody tr').length,3);assert($('deviceMessage').textContent.includes('с SD'));assert.equal(document.querySelectorAll('#deviceList img').length,0,'device names must render as text');
  $('add').onclick();let input=document.querySelector('[data-field="action"]');input.value='SET("old-device", "switch_1", false)';const picker=document.querySelector('[data-device-picker]');picker.value='relay1';Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='Подставить устройство в SET').onclick();assert.equal(input.value,'SET("relay1", "switch_1", false)');
- await vm.runInContext('loadDevices(false)',context);assert.equal(document.querySelectorAll('#deviceList tbody tr').length,4);assert($('deviceMessage').textContent.includes('Загружено из Tuya'));assert.equal(job.initial,false);
+ await vm.runInContext('loadDevices(false)',context);assert.equal(document.querySelectorAll('#deviceList tbody tr').length,4);assert($('deviceMessage').textContent.includes('обновлён и сохранён на SD'));assert.equal(job.initial,false);
  assert.equal(input.value,'SET("relay1", "switch_1", false)','background refresh must preserve unsaved action edits');
  assert($('nextDevices').disabled);
  await vm.runInContext('loadDevices(false)',context);assert.equal(document.querySelectorAll('#deviceList tbody tr').length,4,'refresh must replace old catalog, not duplicate entries');
