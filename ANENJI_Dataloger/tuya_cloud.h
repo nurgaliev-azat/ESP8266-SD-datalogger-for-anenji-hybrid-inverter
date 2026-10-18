@@ -24,6 +24,9 @@ Credentials credentials={};
 Rule rules[MAX_RULES];Runtime runtime[MAX_RULES];size_t ruleCount=0;
 String accessToken,state="disabled";
 time_t tokenExpires=0;
+uint32_t tlsHeap=0,tlsMaxBlock=0;int tlsError=0;
+uint16_t tlsRxBytes=16384;
+int8_t fragmentRegion=-1;bool fragmentSupported=false;uint32_t fragmentCheckedAt=0;
 uint32_t bootMs=0,lastTick=0,lastAttempt=0;
 bool attempted=false,testRequested=false,rulesLoaded=false;
 uint8_t failures[MAX_RULES]={};
@@ -212,17 +215,36 @@ class LimitedCloudStream:public Stream {
  bool exhausted()const{return consumed>=maximum;}
 };
 // Every call validates the server chain and hostname. No insecure TLS fallback.
-bool request(const char*method,const String&path,const String&body,bool tokenRequest,JsonDocument&reply,JsonVariantConst responseFilter=JsonVariantConst(),size_t maxResponse=4096){
+bool request(const char*method,const String&path,const String&body,bool tokenRequest,DynamicJsonDocument&reply,JsonVariantConst responseFilter=JsonVariantConst(),size_t maxResponse=4096){
  if(WiFi.status()!=WL_CONNECTED||!validClock()){state="offline";return false;}
  if(!sdReady){state="sd_required";return false;}
- if(ESP.getFreeHeap()<29000||ESP.getMaxFreeBlockSize()<18000){state="low_memory";return false;}
+ const size_t replyCapacity=reply.capacity();
+ reply=DynamicJsonDocument(0); // Allocate response JSON only after the TLS handshake releases its validator.
  File cert=SD.open("/TUYA.CA",FILE_READ);
  if(!cert||cert.size()>4096){if(cert)cert.close();state="ca_required";return false;}
+ // Check the certificate before allocating TLS buffers or probing the network.
  String pem=cert.readString();cert.close();
  BearSSL::X509List trust(pem.c_str());pem="";
  if(!trust.getCount()){state="ca_invalid";return false;}
+ // Probe only public TLS capability; no credentials are sent. Cache per region for an hour.
+ if(fragmentRegion!=credentials.region||uint32_t(millis()-fragmentCheckedAt)>=3600000UL){
+  fragmentSupported=BearSSL::WiFiClientSecure::probeMaxFragmentLength(HOSTS[credentials.region],443,1024);
+  fragmentRegion=credentials.region;fragmentCheckedAt=millis();
+ }
+ tlsRxBytes=fragmentSupported?1024:16384;
+ tlsHeap=ESP.getFreeHeap();tlsMaxBlock=ESP.getMaxFreeBlockSize();tlsError=0;
+ const uint32_t requiredHeap=fragmentSupported?15000:29000;
+ const uint32_t requiredBlock=fragmentSupported?7000:18000;
+ if(tlsHeap<requiredHeap||tlsMaxBlock<requiredBlock){state="low_memory";return false;}
  BearSSL::WiFiClientSecure client;client.setTrustAnchors(&trust);
- client.setBufferSizes(16384,512);client.setTimeout(3500);
+ client.setBufferSizes(tlsRxBytes,512);client.setTimeout(3500);
+ // Confirm the negotiated fragment limit before HTTP headers can carry credentials.
+ if(!client.connect(HOSTS[credentials.region],443)){
+  tlsError=client.getLastSSLError();state="tls_or_network_error";client.stop();return false;
+ }
+ if(fragmentSupported&&!client.getMFLNStatus()){
+  fragmentSupported=false;state="tls_or_network_error";client.stop();return false;
+ }
  HTTPClient http;http.setTimeout(3500);http.setReuse(false);http.useHTTP10(true);
  if(!http.begin(client,String("https://")+HOSTS[credentials.region]+path)){state="http_error";return false;}
  struct timeval now;gettimeofday(&now,nullptr);
@@ -234,8 +256,11 @@ bool request(const char*method,const String&path,const String&body,bool tokenReq
  if(!tokenRequest)http.addHeader("access_token",accessToken);
  if(body.length())http.addHeader("Content-Type","application/json");
  int status=http.sendRequest(method,body);
+ tlsError=client.getLastSSLError();
  if(status!=200){state=status<0?"tls_or_network_error":"http_error";http.end();return false;}
  int length=http.getSize();if(length>static_cast<int>(maxResponse)){state="reply_too_large";http.end();return false;}
+ reply=DynamicJsonDocument(replyCapacity);
+ if(reply.capacity()<replyCapacity){state="low_memory";http.end();return false;}
  LimitedCloudStream stream(http.getStream(),maxResponse);
  DeserializationError error;
  if(responseFilter.isNull())error=deserializeJson(reply,stream);
@@ -508,12 +533,14 @@ void getFunctions(){
 }
 
 void getConfig(){
+ const uint32_t heap=ESP.getFreeHeap(),block=ESP.getMaxFreeBlockSize();
  DynamicJsonDocument doc(8192);
  doc["language"]=appSettings.language;doc["enabled"]=bool(credentials.enabled);
  doc["region"]=credentials.region;doc["clientId"]=credentials.clientId;
  doc["hasSecret"]=credentials.secret[0]!=0;doc["status"]=state;
  doc["sdReady"]=sdReady;doc["hasCA"]=sdReady&&SD.exists("/TUYA.CA");
- doc["fresh"]=freshData();doc["heap"]=ESP.getFreeHeap();
+ doc["fresh"]=freshData();doc["heap"]=heap;doc["maxBlock"]=block;
+ doc["tlsHeap"]=tlsHeap;doc["tlsMaxBlock"]=tlsMaxBlock;doc["tlsRxBytes"]=tlsRxBytes;doc["tlsError"]=tlsError;
  rulesJson(doc.createNestedArray("rules"));
  String body;serializeJson(doc,body);anenjiWebServer.sendHeader("Cache-Control","no-store");
  anenjiWebServer.send(200,"application/json; charset=utf-8",body);
@@ -552,6 +579,7 @@ void saveCA(){
  BearSSL::X509List trust(pem);
  if(!trust.getCount()){jsonReply(400,"ca_invalid");return;}
  if(!writeFile("/TUYA.CA",String(pem))){jsonReply(500,"save_failed");return;}
+ state=credentials.enabled?"ready":"disabled";tlsHeap=0;tlsMaxBlock=0;tlsError=0;
  accessToken="";tokenExpires=0;verifyRule=-1;
  for(size_t i=0;i<MAX_RULES;++i){runtime[i]=Runtime();failures[i]=0;suspended[i]=false;}
  jsonReply(200,"saved");

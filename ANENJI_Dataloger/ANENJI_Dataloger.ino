@@ -6,6 +6,8 @@
 #include <SD.h>
 #include <time.h>
 #include <stddef.h>
+#include <memory>
+#include <new>
 #include "Registers.h"
 #include "web_server.h"
 
@@ -85,8 +87,7 @@ bool faultRead=false,warningRead=false,modeRead=false;
 uint32_t currentFaultFlags=0,currentWarningFlags=0;
 uint16_t currentModeCode=0;
 
-StoredRecord dayRecords[288];
-bool dayValid[288];
+struct DayCache { StoredRecord records[288]; bool valid[288]; };
 
 void fillWebLiveData(WebLiveData& data);
 size_t getTodaySamples(WebSample* output,size_t maxSamples,size_t offset);
@@ -637,8 +638,8 @@ void inspectStorage(){
                 static_cast<unsigned>(invalidLines));
 }
 
-void readDay(int year,int month,int day){
-  memset(dayValid,0,sizeof(dayValid));
+void readDay(DayCache& cache,int year,int month,int day){
+  memset(cache.valid,0,sizeof(cache.valid));
   char path[20];
   snprintf(path,sizeof(path),"/%04d%02d%02d.CSV",
            year,month,day);
@@ -657,8 +658,8 @@ void readDay(int year,int month,int day){
            y==year&&m==month&&d==day){
           size_t index=h*12+min/5;
           if(index<288){
-            dayRecords[index]=record;
-            dayValid[index]=true;
+            cache.records[index]=record;
+            cache.valid[index]=true;
           }
         }
         yield();
@@ -675,8 +676,8 @@ void readDay(int year,int month,int day){
        y==year&&m==month&&d==day){
       size_t index=h*12+min/5;
       if(index<288){
-        dayRecords[index]=record;
-        dayValid[index]=true;
+        cache.records[index]=record;
+        cache.valid[index]=true;
       }
     }
   }
@@ -1073,6 +1074,10 @@ size_t getHistoryForWeb(WebHistoryHour* output,size_t maxRecords,
     }
   }
 
+  std::unique_ptr<DayCache> storage(new(std::nothrow) DayCache);
+  if(!storage)return 0;
+  DayCache& cache=*storage;
+
   int firstMonth=scale=="month"||scale=="year"?1:month;
   int lastMonth=scale=="month"||scale=="year"?12:month;
 
@@ -1082,16 +1087,16 @@ size_t getHistoryForWeb(WebHistoryHour* output,size_t maxRecords,
       day:daysInMonth(year,m);
 
     for(int d=firstDay;d<=lastDay;++d){
-      readDay(year,m,d);
+      readDay(cache,year,m,d);
 
       for(size_t i=0;i<288;++i){
-        if(!dayValid[i])continue;
-        if(bucketHasMeasurement&&dayRecords[i].slot==activeSlot)  continue;
+        if(!cache.valid[i])continue;
+        if(bucketHasMeasurement&&cache.records[i].slot==activeSlot)  continue;
         size_t index=scale=="hour"?i/12:
           scale=="day"?d-1:
           scale=="month"?m-1:0;
         if(index<count)
-          addRecordEnergy(output[index],dayRecords[i]);
+          addRecordEnergy(output[index],cache.records[i]);
       }
 
       if(bucketHasMeasurement&&activeSlot){
@@ -1115,23 +1120,30 @@ size_t getTodaySamples(WebSample* output,size_t maxSamples,size_t offset){
   time_t now=time(nullptr);
   struct tm t;
   localtime_r(&now,&t);
-  if(offset==0)readDay(t.tm_year+1900,t.tm_mon+1,t.tm_mday);
+  static std::unique_ptr<DayCache> storage;
+  if(offset==0){
+    storage.reset(new(std::nothrow) DayCache);
+    if(storage)readDay(*storage,t.tm_year+1900,t.tm_mon+1,t.tm_mday);
+  }
+  if(!storage)return 0;
+  DayCache& cache=*storage;
 
   size_t result=0,seen=0;
   for(size_t i=0;i<288&&result<maxSamples;++i){
-    if(!dayValid[i])continue;
-    if(bucketHasMeasurement&&dayRecords[i].slot==activeSlot)  continue;
+    if(!cache.valid[i])continue;
+    if(bucketHasMeasurement&&cache.records[i].slot==activeSlot)  continue;
     if(seen++<offset)continue;
     WebSample& p=output[result++];
     p={};
-    p.timestamp=dayRecords[i].slot*FIVE_MINUTES;
+    p.timestamp=cache.records[i].slot*FIVE_MINUTES;
     p.minuteOfDay=i*5;
-    p.gridPower=dayRecords[i].wh[0]*12.0f;
-    p.pvPower=dayRecords[i].wh[1]*12.0f;
-    p.loadPower=dayRecords[i].wh[2]*12.0f;
-    p.batteryChargePower=dayRecords[i].wh[3]*12.0f;
-    p.batteryDischargePower=dayRecords[i].wh[4]*12.0f;
+    p.gridPower=cache.records[i].wh[0]*12.0f;
+    p.pvPower=cache.records[i].wh[1]*12.0f;
+    p.loadPower=cache.records[i].wh[2]*12.0f;
+    p.batteryChargePower=cache.records[i].wh[3]*12.0f;
+    p.batteryDischargePower=cache.records[i].wh[4]*12.0f;
   }
+  if(result<maxSamples)storage.reset();
   return result;
 }
 

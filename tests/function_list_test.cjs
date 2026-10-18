@@ -33,5 +33,8 @@ const settle=()=>new Promise(r=>setImmediate(r));const $=id=>document.getElement
  commands.value='3';commands.dispatchEvent(new window.Event('change'));insert.onclick();assert(input.value.includes('mode'),'Raw unsupported');
  picker.value='relay2';picker.dispatchEvent(new window.Event('change'));insert.onclick();assert(input.value.includes('relay1'),'must not reuse functions after device change');
  assert(requests.every(r=>!r.url.includes('/commands')));
+ vm.runInContext('showStatus({status:"low_memory",sdReady:true,hasCA:false,fresh:true,heap:31000,maxBlock:22000,tlsHeap:30000,tlsMaxBlock:21000,tlsRxBytes:16384,tlsError:0})',context);
+ assert($('status').textContent.includes('31000 B'));assert($('status').textContent.includes('22000 B'));assert($('status').textContent.includes('Свободная RAM'));
+ vm.runInContext('lang="en";showStatus({heap:12345,maxBlock:9999})',context);assert($('status').textContent.includes('Free RAM: 12345 B'));
  console.log('PASS: function loading, Boolean/Integer/Enum values, range steps, unsupported types, device changes and read-only requests');
 })().catch(e=>{console.error(e);process.exit(1)});
