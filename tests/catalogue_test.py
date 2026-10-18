@@ -105,11 +105,19 @@ job_end = source.index('} deviceJob;',job_start)+len('} deviceJob;')
 error_start = source.index('struct RuleError {')
 error_end = source.index('int verifyRule=', error_start)
 functions = source[error_start:error_end] + '\n' + '\n'.join(extract(name) for name in [
- 'void expireDeviceJob()', 'bool loadDeviceProfile(', 'bool loadCatalogue(',
+ 'void expireDeviceJob()', 'bool loadDeviceProfile(', 'bool persistAccountUid(', 'void getAccountUid()', 'bool loadCatalogue(',
  'String cataloguePagePath(', 'bool readCataloguePage(', 'bool beginCatalogue(',
  'void maybeInitialCatalogue()', 'void deviceStep()', 'void getDevices()', 'bool sendRule(', 'bool confirmRule(', 'void getRuleAlerts()'])
 post = r'''
 int main(){
+ // UID is saved before any cloud request and restored independently of catalogue JSON.
+ DynamicJsonDocument account(512);failCloud=true;credentials.secret[0]=0;
+ assert(persistAccountUid("saved_uid"));assert(cloudRequests==0);assert(loadDeviceProfile(account,false));assert(account["uid"]=="saved_uid"&&account["autoAttempted"]==false);
+ getAccountUid();DynamicJsonDocument uidReply(256);assert(!deserializeJson(uidReply,anenjiWebServer.body));assert(uidReply["uid"]=="saved_uid");
+ auto savedAccount=files["/TUYA.ACC"];assert(persistAccountUid("saved_uid")&&files["/TUYA.ACC"]==savedAccount);
+ credentials.region=4;assert(!loadDeviceProfile(account));assert(loadDeviceProfile(account,false)&&account["uid"]=="saved_uid");credentials.region=3;
+ failWrite=true;assert(!persistAccountUid("replacement_uid"));assert(files["/TUYA.ACC"]==savedAccount);failWrite=false;
+ strlcpy(credentials.secret,"secret",sizeof(credentials.secret));failCloud=false;files.clear();deviceJob={};autoCatalogueChecked=false;
  // First connection automatically schedules exactly one complete catalogue job.
  files["/TUYA.CA"]="test CA";
  files["/TUYA.ACC"]=R"({"uid":"uid","clientId":"client","region":3})";

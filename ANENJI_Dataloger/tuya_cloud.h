@@ -302,18 +302,28 @@ void expireDeviceJob(){
   deviceJob.queued=false;deviceJob.status="error";deviceJob.error="device_timeout";
  }
 }
-bool loadDeviceProfile(JsonDocument&profile){
+bool loadDeviceProfile(JsonDocument&profile,bool matchContext=true){
  if(!sdReady)return false;
  for(const char*path:{"/TUYA.ACC","/TUYA.ACC.BAK"}){
   File file=SD.open(path,FILE_READ);if(!file)continue;
   if(file.size()>512){file.close();continue;}
   auto error=deserializeJson(profile,file);file.close();
-  if(!error&&String(profile["clientId"]|"")==credentials.clientId&&
-     profile["region"].as<unsigned>()==credentials.region&&
-     TuyaDevices::identifier(profile["uid"]|"",64))return true;
+  if(!error&&TuyaDevices::identifier(profile["uid"]|"",64)&&
+     (!matchContext||(String(profile["clientId"]|"")==credentials.clientId&&
+     profile["region"].as<unsigned>()==credentials.region)))return true;
   profile.clear();
  }
  return false;
+}
+bool persistAccountUid(const char*uid){
+ if(!sdReady||!TuyaDevices::identifier(uid,64))return false;
+ DynamicJsonDocument profile(512);
+ if(loadDeviceProfile(profile)&&String(profile["uid"]|"")==uid)return true;
+ profile.clear();profile["uid"]=uid;profile["clientId"]=credentials.clientId;profile["region"]=credentials.region;
+ profile["autoAttempted"]=false;String text;serializeJson(profile,text);
+ if(!writeFile("/TUYA.ACC",text))return false;
+ autoCatalogueChecked=false;deviceJob.queued=false;deviceJob.functions=false;deviceJob.status="idle";deviceJob.error="";
+ return true;
 }
 // A manifest publishes only complete snapshots. Refresh writes the inactive bank.
 bool loadCatalogue(JsonDocument& doc,const char*uid){
@@ -526,6 +536,20 @@ bool readBody(JsonDocument&doc){
  if(body.length()>10000||deserializeJson(doc,body)){jsonReply(400,"invalid_json");return false;}
  return true;
 }
+void getAccountUid(){
+ DynamicJsonDocument profile(512),doc(256);
+ doc["uid"]=loadDeviceProfile(profile,false)?(profile["uid"]|""):"";
+ String body;serializeJson(doc,body);anenjiWebServer.sendHeader("Cache-Control","no-store");
+ anenjiWebServer.send(200,"application/json; charset=utf-8",body);
+}
+void saveAccountUid(){
+ DynamicJsonDocument doc(256);if(!readBody(doc))return;
+ const char*uid=doc["uid"]|"";
+ if(!TuyaDevices::identifier(uid,64)){jsonReply(400,"invalid_uid_or_cursor");return;}
+ if(!sdReady){jsonReply(503,"sd_required");return;}
+ if(!persistAccountUid(uid)){jsonReply(500,"save_failed");return;}
+ jsonReply(200,"saved");
+}
 void getDevices(){
  expireDeviceJob();DynamicJsonDocument doc(512),profile(512),manifest(768),page(2048);
  bool hasProfile=loadDeviceProfile(profile);
@@ -572,7 +596,13 @@ void queueDevices(){
  expireDeviceJob();DynamicJsonDocument doc(512),profile(512),manifest(768);if(!readBody(doc))return;
  const char*uid=doc["uid"]|"";
  if(!TuyaDevices::identifier(uid,64)){jsonReply(400,"invalid_uid_or_cursor");return;}
- if(deviceJob.queued){jsonReply(409,"device_busy");return;}
+ if(deviceJob.queued){
+  if(doc["initial"]==true&&!deviceJob.functions&&String(deviceJob.uid)==uid){
+   DynamicJsonDocument response(256);response["status"]="queued";response["jobId"]=deviceJob.id;
+   String body;serializeJson(response,body);anenjiWebServer.send(202,"application/json",body);return;
+  }
+  jsonReply(409,"device_busy");return;
+ }
  if(!credentials.clientId[0]||!credentials.secret[0]){jsonReply(400,"credentials_required");return;}
  if(!sdReady){jsonReply(503,"sd_required");return;}
  if(doc["initial"]==true&&loadDeviceProfile(profile)&&String(profile["uid"]|"")==uid&&
@@ -696,6 +726,8 @@ void tuyaRegisterWeb(){
  anenjiWebServer.on("/api/tuya/config",HTTP_POST,TuyaCloud::saveConfig);
  anenjiWebServer.on("/api/tuya/functions",HTTP_GET,TuyaCloud::getFunctions);
  anenjiWebServer.on("/api/tuya/functions",HTTP_POST,TuyaCloud::queueFunctions);
+ anenjiWebServer.on("/api/tuya/account",HTTP_GET,TuyaCloud::getAccountUid);
+ anenjiWebServer.on("/api/tuya/account",HTTP_POST,TuyaCloud::saveAccountUid);
  anenjiWebServer.on("/api/tuya/devices",HTTP_GET,TuyaCloud::getDevices);
  anenjiWebServer.on("/api/tuya/devices",HTTP_POST,TuyaCloud::queueDevices);
  anenjiWebServer.on("/api/tuya/rules",HTTP_POST,TuyaCloud::saveRules);

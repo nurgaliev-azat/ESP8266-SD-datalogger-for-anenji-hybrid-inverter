@@ -105,6 +105,8 @@ EEPROM эмулируется во flash: 4096 байт, 256 для настро
 | POST /api/tuya/ca | CA-сертификат на SD |
 | POST /api/tuya/rules | Сценарии на SD |
 | POST /api/tuya/test | Запросить проверку авторизации без переключения устройства |
+| GET /api/tuya/account | Восстановить сохранённый UID независимо от каталога |
+| POST /api/tuya/account | Сохранить UID на SD без запроса к облаку |
 | GET /api/tuya/devices | Прогресс загрузки, UID и полный список устройств с SD |
 | POST /api/tuya/devices | Запустить полный рефреш устройств в фоне |
 | GET /api/tuya/alerts | Активные ошибки обращений к устройствам сценариев |
