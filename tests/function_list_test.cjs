@@ -21,7 +21,7 @@ const context={document,console,JSON,Array,Number,String,Object,Error,Promise,Te
 }};vm.createContext(context);vm.runInContext(html.match(/<script>([\s\S]*)<\/script>/)[1],context);
 const settle=()=>new Promise(r=>setImmediate(r));const $=id=>document.getElementById(id);
 (async()=>{
- await settle();assert.equal($('accountUid').value,'account_uid');assert.equal(document.querySelectorAll('#deviceList tbody tr').length,3);assert($('deviceMessage').textContent.includes('кэша'));assert.equal(document.querySelectorAll('#deviceList img').length,0,'device names must render as text');
+ await settle();assert.equal($('accountUid').value,'account_uid');assert.equal(document.querySelectorAll('#deviceList tbody tr').length,3);assert($('deviceMessage').textContent.includes('с SD'));assert.equal(document.querySelectorAll('#deviceList img').length,0,'device names must render as text');
  $('add').onclick();let input=document.querySelector('[data-field="action"]');input.value='SET("old-device", "switch_1", false)';const picker=document.querySelector('[data-device-picker]');picker.value='relay1';Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='Подставить устройство в SET').onclick();assert.equal(input.value,'SET("relay1", "switch_1", false)');
  const area=picker.parentElement;
  Array.from(area.querySelectorAll('button')).find(b=>b.textContent==='Загрузить функции').onclick();await settle();await settle();
@@ -36,5 +36,8 @@ const settle=()=>new Promise(r=>setImmediate(r));const $=id=>document.getElement
  vm.runInContext('showStatus({status:"low_memory",sdReady:true,hasCA:false,fresh:true,heap:31000,maxBlock:22000,tlsHeap:30000,tlsMaxBlock:21000,tlsRxBytes:16384,tlsError:0})',context);
  assert($('status').textContent.includes('31000 B'));assert($('status').textContent.includes('22000 B'));assert($('status').textContent.includes('Свободная RAM'));
  vm.runInContext('lang="en";showStatus({heap:12345,maxBlock:9999})',context);assert($('status').textContent.includes('Free RAM: 12345 B'));
+ vm.runInContext('lang="ru";showStatus({ruleErrors:[{name:"Бойлер <script>",device:"relay1",code:"command_rejected",paused:true}]})',context);
+ assert($('ruleAlerts').textContent.includes('Бойлер <script>'));assert.equal($('ruleAlerts').querySelectorAll('script').length,0);assert($('ruleAlerts').textContent.includes('Команда')||$('ruleAlerts').textContent.includes('команд'));assert($('ruleAlerts').textContent.includes('Попытки остановлены'));
+ vm.runInContext('showStatus({ruleErrors:[]})',context);assert.equal($('ruleAlerts').textContent,'');
  console.log('PASS: function loading, Boolean/Integer/Enum values, range steps, unsupported types, device changes and read-only requests');
 })().catch(e=>{console.error(e);process.exit(1)});

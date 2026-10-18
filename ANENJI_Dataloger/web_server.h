@@ -226,6 +226,7 @@ button.active{background:#326de8;color:white}
 <section class="block status">
 <div class="top"><div><b data-i18n="statusLabel">Status:</b> <span id="status">Waiting for data</span></div>
 <div class="top-actions"><div class="language-switch" role="group" aria-label="Language"><button id="langEn" type="button">EN</button><button id="langRu" type="button">RU</button></div><a class="settings" data-i18n="settings" href="/settings">Settings</a><a class="settings" href="/tuya" data-i18n="tuya">Tuya Cloud</a></div></div>
+<div id="tuyaAlerts" role="alert" aria-live="polite" style="color:#a32b3e;white-space:pre-wrap"></div>
 <div id="languageMessage" role="status" class="notice"></div>
 <div><b data-i18n="inverterIp">Inverter IP:</b> <span id="inverterIp">—</span></div>
 </section>
@@ -343,7 +344,7 @@ function applyLanguage(next){
   $('mode').textContent=t('mode')+': '+t('waiting');
   $('faults').textContent=t('noFaults');$('warnings').textContent=t('noWarnings');
  }
- dayChart();historyChart();
+ renderTuyaAlerts();dayChart();historyChart();
 }
 async function changeLanguage(next){
  if(languageSaving||next===language)return;
@@ -589,7 +590,18 @@ function renderLiveData(d){
     d.warnings||t('noWarnings');
   updateFlows(d);
 }
+let tuyaAlerts=[],tuyaAlertLast=0;
+function renderTuyaAlerts(){
+ const ru=language==='ru';
+ const codes=ru?{api_error:'Tuya отклонил запрос',command_rejected:'Команда отклонена',not_confirmed:'Изменение состояния не подтверждено',offline:'Нет связи',low_memory:'Недостаточно RAM для TLS',ca_required:'Нет CA-сертификата',ca_invalid:'Некорректный CA-сертификат',credentials_required:'Не заданы данные облака',sd_required:'Нет SD-карты',tls_or_network_error:'Ошибка TLS или сети',http_error:'Ошибка HTTP',invalid_reply:'Некорректный ответ',reply_too_large:'Слишком большой ответ'}:{api_error:'Tuya rejected request',command_rejected:'Command rejected',not_confirmed:'State change not confirmed',offline:'No connection',low_memory:'Not enough RAM for TLS',ca_required:'CA certificate missing',ca_invalid:'Invalid CA certificate',credentials_required:'Cloud credentials missing',sd_required:'SD card missing',tls_or_network_error:'TLS or network error',http_error:'HTTP error',invalid_reply:'Invalid response',reply_too_large:'Response too large'};
+ $('tuyaAlerts').textContent=tuyaAlerts.map(e=>(ru?'Ошибка сценария: ':'Scenario error: ')+e.name+' ['+e.device+'] — '+(codes[e.code]||e.code)+(e.paused?(ru?' · Попытки остановлены до сброса условия':' · Retries paused until condition resets'):'')).join('\n');
+}
+async function refreshTuyaAlerts(){
+ if(Date.now()-tuyaAlertLast<10000)return;tuyaAlertLast=Date.now();
+ try{const data=await json('/api/tuya/alerts');if(Array.isArray(data)){tuyaAlerts=data;renderTuyaAlerts()}}catch(e){}
+}
 async function refresh(){
+ refreshTuyaAlerts();renderTuyaAlerts();
  try{
   const revision=languageRevision;
   const d=await json('/api/live');

@@ -40,6 +40,10 @@ const context={console:{error(){}},URLSearchParams,Date,Number,String,Math,Promi
  vm.runInContext("scale='month';hours=[{year:2026,month:3,day:1,hasData:true},{year:2026,month:5,day:1,hasData:true}]",context);
  cols=vm.runInContext('historyAxisColumns(columns())',context);assert.equal(cols.length,3);assert.equal(cols[0].index,2);assert.equal(cols[2].index,4);
  vm.runInContext("scale='hour';hours=[]",context);assert.equal(vm.runInContext('historyAxisColumns(columns()).length',context),24);
+ vm.runInContext('tuyaAlerts=[{name:"<img src=x>",device:"relay1",code:"api_error",paused:true}];applyLanguage("ru")',context);
+ assert(ids.tuyaAlerts.textContent.includes('Ошибка сценария'));assert(ids.tuyaAlerts.textContent.includes('relay1'));assert(ids.tuyaAlerts.textContent.includes('Попытки остановлены'));
+ vm.runInContext('applyLanguage("en")',context);assert(ids.tuyaAlerts.textContent.includes('Scenario error'));assert(!ids.tuyaAlerts.textContent.includes('Ошибка'));
+ vm.runInContext('tuyaAlerts=[];renderTuyaAlerts()',context);assert.equal(ids.tuyaAlerts.textContent,'');
  console.log('PASS: X ranges, single point, empty history, zero measurements, gaps, hour/day/month labels and responsive tick spacing');
  console.log('PASS: EN/RU labels, titles, units, diagnostics, same-language no-op and save-failure rollback');
 })().catch(e=>{console.error(e);process.exit(1)});

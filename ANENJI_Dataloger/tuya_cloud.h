@@ -34,8 +34,17 @@ bool suspended[MAX_RULES]={};
 struct DeviceJob {
  bool queued=false,functions=false;uint32_t id=0,started=0;uint8_t attempts=0;
  char uid[65]={},cursor[TuyaDevices::MAX_CURSOR+1]={};
+ uint16_t pages=0;uint32_t count=0,generation=0;uint8_t bank=0;
  const char*status="idle";String error;
 } deviceJob;
+bool autoCatalogueChecked=false;
+struct RuleError {char code[32]={};uint32_t at=0;bool active=false;};
+RuleError ruleErrors[MAX_RULES];
+void noteRuleError(size_t index){
+ if(index>=MAX_RULES)return;
+ strlcpy(ruleErrors[index].code,state.c_str(),sizeof(ruleErrors[index].code));
+ ruleErrors[index].at=static_cast<uint32_t>(time(nullptr));ruleErrors[index].active=true;
+}
 int verifyRule=-1;uint8_t verifyAttempts=0;uint32_t verifyAfter=0;
 const char* const HOSTS[]={"openapi.tuyacn.com","openapi.tuyaus.com",
  "openapi-ueaz.tuyaus.com","openapi.tuyaeu.com","openapi-weaz.tuyaeu.com",
@@ -63,6 +72,7 @@ bool saveCredentials(const Credentials&next){
  EEPROM.put(CREDENTIAL_OFFSET,next);
  if(!EEPROM.commit()){EEPROM.put(CREDENTIAL_OFFSET,old);return false;}
  deviceJob.queued=false;deviceJob.status="idle";deviceJob.error="";
+ autoCatalogueChecked=false;for(auto&error:ruleErrors)error=RuleError();
  credentials=next;accessToken="";tokenExpires=0;verifyRule=-1;attempted=false;
  for(size_t i=0;i<MAX_RULES;++i){runtime[i]=Runtime();failures[i]=0;suspended[i]=false;}
  state=credentials.enabled?"ready":"disabled";
@@ -186,7 +196,8 @@ void loadRules(){
   DynamicJsonDocument doc(8192);auto error=deserializeJson(doc,f);f.close();
   Rule candidate[MAX_RULES];size_t count=0;
   if(!error&&(doc["version"]==1||doc["version"]==2)&&parseRules(doc["rules"],candidate,count)){
-   ruleCount=count;for(size_t i=0;i<count;++i){rules[i]=candidate[i];runtime[i]=Runtime();failures[i]=0;suspended[i]=false;}
+   for(auto&error:ruleErrors)error=RuleError();
+ ruleCount=count;for(size_t i=0;i<count;++i){rules[i]=candidate[i];runtime[i]=Runtime();failures[i]=0;suspended[i]=false;}
    rulesLoaded=true;return;
   }
  }
@@ -304,6 +315,55 @@ bool loadDeviceProfile(JsonDocument&profile){
  }
  return false;
 }
+// A manifest publishes only complete snapshots. Refresh writes the inactive bank.
+bool loadCatalogue(JsonDocument& doc,const char*uid){
+ for(const char*path:{"/TUYA.CAT","/TUYA.CAT.BAK"}){
+  File f=SD.open(path,FILE_READ);bool ok=f&&f.size()<=768&&!deserializeJson(doc,f);if(f)f.close();
+  if(ok&&doc["version"]==2&&String(doc["uid"]|"")==uid&&String(doc["clientId"]|"")==credentials.clientId&&
+   doc["region"].as<unsigned>()==credentials.region&&doc["bank"].is<unsigned>()&&doc["bank"].as<unsigned>()<2&&
+   doc["pages"].is<unsigned>()&&doc["pages"].as<unsigned>()>0&&doc["pages"].as<unsigned>()<=4096&&
+   doc["generation"].is<uint32_t>()&&doc["count"].is<uint32_t>()&&doc["count"].as<uint32_t>()<=doc["pages"].as<unsigned>()*TuyaDevices::PAGE_SIZE)return true;
+  doc.clear();
+ }
+ return false;
+}
+String cataloguePagePath(uint8_t bank,uint16_t page){
+ char path[20];snprintf(path,sizeof(path),"/T%u%04u.JSN",unsigned(bank),unsigned(page));return String(path);
+}
+bool readCataloguePage(JsonDocument& page,JsonVariantConst manifest,uint16_t index){
+ page.clear();File f=SD.open(cataloguePagePath(manifest["bank"],index).c_str(),FILE_READ);
+ bool valid=f&&f.size()<=4096&&!deserializeJson(page,f);if(f)f.close();
+ if(!valid||page["version"]!=1||page["generation"]!=manifest["generation"]||String(page["uid"]|"")!=String(manifest["uid"]|"")||
+   String(page["clientId"]|"")!=credentials.clientId||page["region"].as<unsigned>()!=credentials.region||
+   !page["devices"].is<JsonArrayConst>()||page["devices"].size()>TuyaDevices::PAGE_SIZE)return false;
+ for(JsonObjectConst d:page["devices"].as<JsonArrayConst>()){
+  if(!TuyaDevices::identifier(d["id"]|"",64)||!d["name"].is<const char*>()||strlen(d["name"])>128||
+     !d["category"].is<const char*>()||strlen(d["category"])>64||(!d["online"].isNull()&&!d["online"].is<bool>()))return false;
+ }
+ return true;
+}
+bool beginCatalogue(const char*uid){
+ DynamicJsonDocument manifest(768),profile(512);
+ bool previous=loadCatalogue(manifest,uid);
+ deviceJob.bank=previous?1-manifest["bank"].as<uint8_t>():0;
+ deviceJob.generation=previous?manifest["generation"].as<uint32_t>()+1:static_cast<uint32_t>(time(nullptr));
+ profile["uid"]=uid;profile["clientId"]=credentials.clientId;profile["region"]=credentials.region;profile["autoAttempted"]=true;
+ String text;serializeJson(profile,text);
+ if(!writeFile("/TUYA.ACC",text))return false;
+ strlcpy(deviceJob.uid,uid,sizeof(deviceJob.uid));deviceJob.cursor[0]=0;deviceJob.functions=false;
+ deviceJob.pages=0;deviceJob.count=0;deviceJob.started=millis();++deviceJob.id;
+ deviceJob.attempts=0;deviceJob.queued=true;deviceJob.status="queued";deviceJob.error="";autoCatalogueChecked=true;
+ return true;
+}
+void maybeInitialCatalogue(){
+ if(autoCatalogueChecked||deviceJob.queued||!sdReady||!validClock()||WiFi.status()!=WL_CONNECTED||
+  !credentials.clientId[0]||!credentials.secret[0]||!SD.exists("/TUYA.CA")||uint32_t(millis()-bootMs)<30000)return;
+ DynamicJsonDocument profile(512),manifest(768);
+ if(!loadDeviceProfile(profile))return;
+ const char*uid=profile["uid"];
+ if(loadCatalogue(manifest,uid)||profile["autoAttempted"]==true){autoCatalogueChecked=true;return;}
+ if(!beginCatalogue(uid)){deviceJob.status="error";deviceJob.error="save_failed";autoCatalogueChecked=true;}
+}
 void deviceStep(){
  if(!deviceJob.queued)return;
  lastAttempt=millis();attempted=true;
@@ -346,31 +406,44 @@ void deviceStep(){
     credentials.clientId,credentials.region,static_cast<uint32_t>(time(nullptr)))){
   deviceJob.queued=false;deviceJob.status="error";deviceJob.error="invalid_reply";return;
  }
+ if(deviceJob.pages>=4096){deviceJob.queued=false;deviceJob.status="error";deviceJob.error="catalogue_limit";return;}
+ page["generation"]=deviceJob.generation;
  String text;serializeJson(page,text);
- if(!writeFile("/TUYA.DEV",text)){
+ if(page.overflowed()||!writeFile(cataloguePagePath(deviceJob.bank,deviceJob.pages).c_str(),text)){
   deviceJob.queued=false;deviceJob.status="error";deviceJob.error="save_failed";return;
  }
- deviceJob.queued=false;deviceJob.status="done";deviceJob.error="";
+ ++deviceJob.pages;deviceJob.count+=page["devices"].size();deviceJob.attempts=0;deviceJob.started=millis();
+ if(page["hasMore"]==true){
+  strlcpy(deviceJob.cursor,page["nextCursor"]|"",sizeof(deviceJob.cursor));
+  deviceJob.status="loading";return;
+ }
+ DynamicJsonDocument manifest(768);manifest["version"]=2;manifest["uid"]=deviceJob.uid;
+ manifest["clientId"]=credentials.clientId;manifest["region"]=credentials.region;manifest["bank"]=deviceJob.bank;
+ manifest["pages"]=deviceJob.pages;manifest["count"]=deviceJob.count;manifest["generation"]=deviceJob.generation;
+ manifest["updatedAt"]=static_cast<uint32_t>(time(nullptr));text="";serializeJson(manifest,text);
+ bool saved=writeFile("/TUYA.CAT",text);
+ deviceJob.queued=false;deviceJob.status=saved?"done":"error";deviceJob.error=saved?"":"save_failed";
 }
+
 bool sendRule(size_t index){
  const Rule&r=rules[index];
  String body="{\"commands\":[{\"code\":\""+String(r.code)+"\",\"value\":"+r.value+"}]}";
  DynamicJsonDocument reply(1024);
- if(!request("POST",String("/v1.0/iot-03/devices/")+r.device+"/commands",body,false,reply))return false;
- if(reply["result"]!=true){state="command_rejected";return false;}
+ if(!request("POST",String("/v1.0/iot-03/devices/")+r.device+"/commands",body,false,reply)){noteRuleError(index);return false;}
+ if(reply["result"]!=true){state="command_rejected";noteRuleError(index);return false;}
  state="confirming";verifyRule=index;verifyAttempts=0;verifyAfter=millis();return true;
 }
 bool confirmRule(size_t index){
  const Rule&r=rules[index];DynamicJsonDocument reply(4096);
- if(!request("GET",String("/v1.0/iot-03/devices/")+r.device+"/status","",false,reply))return false;
+ if(!request("GET",String("/v1.0/iot-03/devices/")+r.device+"/status","",false,reply)){noteRuleError(index);return false;}
  DynamicJsonDocument expected(256);deserializeJson(expected,r.value);
  for(JsonObjectConst value:reply["result"].as<JsonArrayConst>()){
   if(String(value["code"]|"")==r.code){
    String actual,wanted;serializeJson(value["value"],actual);serializeJson(expected,wanted);
-   if(actual==wanted){acknowledge(runtime[index],millis());state="confirmed";return true;}
+   if(actual==wanted){acknowledge(runtime[index],millis());state="confirmed";ruleErrors[index].active=false;return true;}
   }
  }
- state="not_confirmed";return false;
+ state="not_confirmed";noteRuleError(index);return false;
 }
 bool freshData(){
  return tuyaHasMeasurement&&uint32_t(millis()-tuyaMeasurementMs)<=
@@ -379,7 +452,7 @@ bool freshData(){
 void tick(){
  const uint32_t now=millis();if(uint32_t(now-lastTick)<1000)return;lastTick=now;
  expireDeviceJob();
- loadRules();
+ loadRules();maybeInitialCatalogue();
  if(!credentials.enabled&&!testRequested&&!deviceJob.queued){
   for(size_t i=0;i<ruleCount;++i)resetPending(runtime[i]);
   verifyRule=-1;state="disabled";return;
@@ -420,7 +493,7 @@ void tick(){
   if(uint32_t(now-verifyAfter)<15000)return;
   lastAttempt=now;attempted=true;
   if(accessToken.isEmpty()||time(nullptr)+60>=tokenExpires){
-   if(!ensureToken()&&++verifyAttempts>=3){suspended[verifyRule]=true;verifyRule=-1;state="confirmation_failed";}
+   if(!ensureToken()){noteRuleError(verifyRule);if(++verifyAttempts>=3){suspended[verifyRule]=true;verifyRule=-1;state="confirmation_failed";}}
    return;
   }
   if(confirmRule(verifyRule)){failures[verifyRule]=0;verifyRule=-1;return;}
@@ -432,7 +505,7 @@ void tick(){
  for(size_t i=0;i<ruleCount;++i)if(due[i]){
   lastAttempt=now;attempted=true;
   if(accessToken.isEmpty()||time(nullptr)+60>=tokenExpires){
-   if(!ensureToken()&&++failures[i]>=3){suspended[i]=true;state="retry_limit";}
+   if(!ensureToken()){noteRuleError(i);if(++failures[i]>=3){suspended[i]=true;state="retry_limit";}}
    return;
   }
   if(!sendRule(i)&&++failures[i]>=3){suspended[i]=true;state="retry_limit";}
@@ -454,55 +527,55 @@ bool readBody(JsonDocument&doc){
  return true;
 }
 void getDevices(){
- expireDeviceJob();
- DynamicJsonDocument doc(3072),profile(512);
- doc["status"]=deviceJob.status;doc["jobId"]=deviceJob.id;doc["error"]=deviceJob.error;
- doc["uid"]="";
- if(loadDeviceProfile(profile)){
-  const char*uid=profile["uid"];doc["uid"]=uid;
-  File file=SD.open("/TUYA.DEV",FILE_READ);
-  if(file){
-   DynamicJsonDocument page(2048);bool valid=file.size()<=4096&&!deserializeJson(page,file);file.close();
-   if(valid&&page["version"]==1&&String(page["uid"]|"")==uid&&
-      String(page["clientId"]|"")==credentials.clientId&&page["region"].as<unsigned>()==credentials.region){
-    // Construct the response explicitly rather than echoing arbitrary on-card JSON.
-    JsonObject output=doc.createNestedObject("page");
-    output["uid"]=uid;output["updatedAt"]=page["updatedAt"];output["requestCursor"]=page["requestCursor"];
-    output["nextCursor"]=page["nextCursor"];output["hasMore"]=page["hasMore"];output["total"]=page["total"];
-    JsonArray devices=output.createNestedArray("devices");
-    size_t count=0;for(JsonObjectConst item:page["devices"].as<JsonArrayConst>()){
-     if(++count>TuyaDevices::PAGE_SIZE||!TuyaDevices::identifier(item["id"]|"",64))break;
-     JsonObject out=devices.createNestedObject();out["id"]=item["id"];out["name"]=item["name"];
-     out["category"]=item["category"];out["online"]=item["online"];
-    }
-   }
+ expireDeviceJob();DynamicJsonDocument doc(512),profile(512),manifest(768),page(2048);
+ bool hasProfile=loadDeviceProfile(profile);
+ const char*uid=hasProfile?(profile["uid"]|""):"";
+ bool cached=hasProfile&&loadCatalogue(manifest,uid);
+ const bool available=cached;
+ if(anenjiWebServer.hasArg("summary")||(anenjiWebServer.hasArg("progress")&&deviceJob.queued&&!deviceJob.functions))cached=false;
+ // Validate the complete snapshot before starting a streamed HTTP response.
+ if(cached){
+  uint32_t count=0;
+  for(uint16_t i=0;i<manifest["pages"].as<unsigned>();++i){
+   if(!readCataloguePage(page,manifest.as<JsonVariantConst>(),i)){jsonReply(503,"catalogue_invalid");return;}
+   count+=page["devices"].size();yield();
   }
+  if(count!=manifest["count"].as<uint32_t>()){jsonReply(503,"catalogue_invalid");return;}
  }
- if(doc.overflowed()){jsonReply(500,"low_memory");return;}
- String body;serializeJson(doc,body);anenjiWebServer.sendHeader("Cache-Control","no-store");
- anenjiWebServer.send(200,"application/json; charset=utf-8",body);
+ doc["status"]=deviceJob.functions?"idle":deviceJob.status;doc["jobId"]=deviceJob.id;
+ doc["error"]=deviceJob.functions?String(""):deviceJob.error;doc["uid"]=uid;
+ doc["loaded"]=deviceJob.count;doc["loading"]=deviceJob.queued&&!deviceJob.functions;
+ doc["hasCatalogue"]=available;doc["catalogueGeneration"]=manifest["generation"];
+ String text;serializeJson(doc,text);text.remove(text.length()-1);
+ anenjiWebServer.sendHeader("Cache-Control","no-store");anenjiWebServer.setContentLength(CONTENT_LENGTH_UNKNOWN);
+ anenjiWebServer.send(200,"application/json; charset=utf-8","");anenjiWebServer.sendContent(text);
+ if(cached){
+  doc.clear();doc["uid"]=uid;doc["requestCursor"]="";doc["nextCursor"]="";doc["hasMore"]=false;
+  doc["total"]=manifest["count"];doc["updatedAt"]=manifest["updatedAt"];doc["generation"]=manifest["generation"];
+  text="";serializeJson(doc,text);text.remove(text.length()-1);
+  anenjiWebServer.sendContent(String(",\"page\":")+text+",\"devices\":[");bool first=true;
+  for(uint16_t i=0;i<manifest["pages"].as<unsigned>();++i){
+   if(!readCataloguePage(page,manifest.as<JsonVariantConst>(),i)){anenjiWebServer.client().stop();return;}
+   for(JsonObjectConst item:page["devices"].as<JsonArrayConst>()){
+    doc.clear();doc["id"]=item["id"];doc["name"]=item["name"];doc["category"]=item["category"];doc["online"]=item["online"];
+    text=first?"":",";serializeJson(doc,text);anenjiWebServer.sendContent(text);first=false;
+   }
+   yield();
+  }
+  anenjiWebServer.sendContent("]}");
+ }
+ anenjiWebServer.sendContent("}");anenjiWebServer.sendContent("");
 }
 void queueDevices(){
- expireDeviceJob();DynamicJsonDocument doc(1024);if(!readBody(doc))return;
- const char*uid=doc["uid"]|"",*cursor=doc["cursor"]|"";
- if(!TuyaDevices::identifier(uid,64)||!TuyaDevices::cursorValid(cursor)){jsonReply(400,"invalid_uid_or_cursor");return;}
+ expireDeviceJob();DynamicJsonDocument doc(512),profile(512),manifest(768);if(!readBody(doc))return;
+ const char*uid=doc["uid"]|"";
+ if(!TuyaDevices::identifier(uid,64)){jsonReply(400,"invalid_uid_or_cursor");return;}
  if(deviceJob.queued){jsonReply(409,"device_busy");return;}
  if(!credentials.clientId[0]||!credentials.secret[0]){jsonReply(400,"credentials_required");return;}
  if(!sdReady){jsonReply(503,"sd_required");return;}
- // Later pages must belong to the current account/cache and match its continuation token.
- if(cursor[0]){
-  File file=SD.open("/TUYA.DEV",FILE_READ);DynamicJsonDocument page(2048);
-  bool valid=file&&file.size()<=4096&&!deserializeJson(page,file);if(file)file.close();
-  if(!valid||String(page["uid"]|"")!=uid||String(page["clientId"]|"")!=credentials.clientId||
-    page["region"].as<unsigned>()!=credentials.region||page["hasMore"]!=true||String(page["nextCursor"]|"")!=cursor){jsonReply(409,"device_refresh_required");return;}
- }
- DynamicJsonDocument profile(512);profile["uid"]=uid;profile["clientId"]=credentials.clientId;profile["region"]=credentials.region;
- String text;serializeJson(profile,text);
- DynamicJsonDocument previous(512);
- bool unchanged=loadDeviceProfile(previous)&&String(previous["uid"]|"")==uid;
- if(!unchanged&&!writeFile("/TUYA.ACC",text)){jsonReply(500,"save_failed");return;}
- deviceJob.functions=false;strlcpy(deviceJob.uid,uid,sizeof(deviceJob.uid));strlcpy(deviceJob.cursor,cursor,sizeof(deviceJob.cursor));
- deviceJob.started=millis();++deviceJob.id;deviceJob.attempts=0;deviceJob.queued=true;deviceJob.status="queued";deviceJob.error="";
+ if(doc["initial"]==true&&loadDeviceProfile(profile)&&String(profile["uid"]|"")==uid&&
+    (loadCatalogue(manifest,uid)||profile["autoAttempted"]==true)){jsonReply(200,"cached");return;}
+ if(!beginCatalogue(uid)){jsonReply(500,"save_failed");return;}
  DynamicJsonDocument response(256);response["status"]="queued";response["jobId"]=deviceJob.id;
  String body;serializeJson(response,body);anenjiWebServer.send(202,"application/json; charset=utf-8",body);
 }
@@ -532,6 +605,15 @@ void getFunctions(){
  String body;serializeJson(doc,body);anenjiWebServer.sendHeader("Cache-Control","no-store");anenjiWebServer.send(200,"application/json; charset=utf-8",body);
 }
 
+void getRuleAlerts(){
+ DynamicJsonDocument doc(1536);JsonArray alerts=doc.to<JsonArray>();
+ for(size_t i=0;i<ruleCount;++i)if(ruleErrors[i].active){
+  JsonObject e=alerts.createNestedObject();e["name"]=rules[i].name;e["device"]=rules[i].device;
+  e["code"]=ruleErrors[i].code;e["at"]=ruleErrors[i].at;e["paused"]=suspended[i];
+ }
+ if(doc.overflowed()){jsonReply(500,"low_memory");return;}
+ String body;serializeJson(doc,body);anenjiWebServer.sendHeader("Cache-Control","no-store");anenjiWebServer.send(200,"application/json; charset=utf-8",body);
+}
 void getConfig(){
  const uint32_t heap=ESP.getFreeHeap(),block=ESP.getMaxFreeBlockSize();
  DynamicJsonDocument doc(8192);
@@ -539,9 +621,15 @@ void getConfig(){
  doc["region"]=credentials.region;doc["clientId"]=credentials.clientId;
  doc["hasSecret"]=credentials.secret[0]!=0;doc["status"]=state;
  doc["sdReady"]=sdReady;doc["hasCA"]=sdReady&&SD.exists("/TUYA.CA");
+ JsonArray alerts=doc.createNestedArray("ruleErrors");
+ for(size_t i=0;i<ruleCount;++i)if(ruleErrors[i].active){
+  JsonObject error=alerts.createNestedObject();error["rule"]=i;error["name"]=rules[i].name;error["device"]=rules[i].device;
+  error["code"]=ruleErrors[i].code;error["at"]=ruleErrors[i].at;error["paused"]=suspended[i];
+ }
  doc["fresh"]=freshData();doc["heap"]=heap;doc["maxBlock"]=block;
  doc["tlsHeap"]=tlsHeap;doc["tlsMaxBlock"]=tlsMaxBlock;doc["tlsRxBytes"]=tlsRxBytes;doc["tlsError"]=tlsError;
  rulesJson(doc.createNestedArray("rules"));
+ if(doc.overflowed()){jsonReply(500,"low_memory");return;}
  String body;serializeJson(doc,body);anenjiWebServer.sendHeader("Cache-Control","no-store");
  anenjiWebServer.send(200,"application/json; charset=utf-8",body);
 }
@@ -569,6 +657,7 @@ void saveRules(){
  String body;serializeJson(doc,body);
  if(body.length()>10000){jsonReply(400,"invalid_rules");return;}
  if(!writeFile("/TUYA.JSON",body)){jsonReply(500,"save_failed");return;}
+ for(auto&error:ruleErrors)error=RuleError();
  ruleCount=count;for(size_t i=0;i<MAX_RULES;++i){rules[i]=candidate[i];runtime[i]=Runtime();failures[i]=0;suspended[i]=false;}
  rulesLoaded=true;verifyRule=-1;jsonReply(200,"saved");
 }
@@ -590,7 +679,7 @@ void tuyaBegin(){TuyaCloud::bootMs=millis();TuyaCloud::loadCredentials();TuyaClo
 void tuyaLoop(){TuyaCloud::tick();}
 void tuyaServiceDevices(){
  // No rule evaluation/commands while waiting for an inverter TCP connection.
- using namespace TuyaCloud;expireDeviceJob();
+ using namespace TuyaCloud;expireDeviceJob();maybeInitialCatalogue();
  const uint32_t now=millis();
  if(!deviceJob.queued||verifyRule>=0||!credentials.clientId[0]||!credentials.secret[0]||
    !sdReady||!validClock()||WiFi.status()!=WL_CONNECTED||uint32_t(now-bootMs)<30000||
@@ -600,6 +689,7 @@ void tuyaServiceDevices(){
 void tuyaRegisterWeb(){
  anenjiWebServer.collectHeaders("Content-Type");
  anenjiWebServer.on("/tuya",HTTP_GET,[](){anenjiWebServer.send_P(200,PSTR("text/html; charset=utf-8"),TUYA_PAGE);});
+ anenjiWebServer.on("/api/tuya/alerts",HTTP_GET,TuyaCloud::getRuleAlerts);
  anenjiWebServer.on("/api/tuya",HTTP_GET,TuyaCloud::getConfig);
  anenjiWebServer.on("/api/tuya/config",HTTP_POST,TuyaCloud::saveConfig);
  anenjiWebServer.on("/api/tuya/functions",HTTP_GET,TuyaCloud::getFunctions);
