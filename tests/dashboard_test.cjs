@@ -44,6 +44,8 @@ const context={console:{error(){}},URLSearchParams,Date,Number,String,Math,Promi
  assert(ids.tuyaAlerts.textContent.includes('Ошибка сценария'));assert(ids.tuyaAlerts.textContent.includes('relay1'));assert(ids.tuyaAlerts.textContent.includes('Попытки остановлены'));
  vm.runInContext('applyLanguage("en")',context);assert(ids.tuyaAlerts.textContent.includes('Scenario error'));assert(!ids.tuyaAlerts.textContent.includes('Ошибка'));
  vm.runInContext('tuyaAlerts=[];renderTuyaAlerts()',context);assert.equal(ids.tuyaAlerts.textContent,'');
+ vm.runInContext('tuyaAlerts=[{name:"Boiler",device:"relay1",code:"confirmation_timeout"}];applyLanguage("en")',context);assert(ids.tuyaAlerts.textContent.includes('60 seconds'));
+ vm.runInContext('applyLanguage("ru")',context);assert(ids.tuyaAlerts.textContent.includes('60 секунд'));
  console.log('PASS: X ranges, single point, empty history, zero measurements, gaps, hour/day/month labels and responsive tick spacing');
  console.log('PASS: EN/RU labels, titles, units, diagnostics, same-language no-op and save-failure rollback');
 })().catch(e=>{console.error(e);process.exit(1)});

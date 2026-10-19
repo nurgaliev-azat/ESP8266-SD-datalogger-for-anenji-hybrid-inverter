@@ -45,7 +45,8 @@ void noteRuleError(size_t index){
  strlcpy(ruleErrors[index].code,state.c_str(),sizeof(ruleErrors[index].code));
  ruleErrors[index].at=static_cast<uint32_t>(time(nullptr));ruleErrors[index].active=true;
 }
-int verifyRule=-1;uint8_t verifyAttempts=0;uint32_t verifyAfter=0;
+constexpr uint32_t CONFIRMATION_TIMEOUT_MS=60000;
+int verifyRule=-1;bool ruleCommandQueued=false;uint32_t verifyAfter=0;
 const char* const HOSTS[]={"openapi.tuyacn.com","openapi.tuyaus.com",
  "openapi-ueaz.tuyaus.com","openapi.tuyaeu.com","openapi-weaz.tuyaeu.com",
  "openapi.tuyain.com","openapi-sg.iotbing.com"};
@@ -435,33 +436,64 @@ void deviceStep(){
  deviceJob.queued=false;deviceJob.status=saved?"done":"error";deviceJob.error=saved?"":"save_failed";
 }
 
+enum class RuleDeviceState { Match, Different, Error };
+RuleDeviceState readRuleState(size_t index){
+ const Rule&r=rules[index];DynamicJsonDocument reply(4096);
+ if(!request("GET",String("/v1.0/iot-03/devices/")+r.device+"/status","",false,reply))return RuleDeviceState::Error;
+ if(!reply["result"].is<JsonArrayConst>()){state="invalid_reply";return RuleDeviceState::Error;}
+ DynamicJsonDocument expected(256);
+ if(deserializeJson(expected,r.value)){state="invalid_rules";return RuleDeviceState::Error;}
+ for(JsonObjectConst item:reply["result"].as<JsonArrayConst>()){
+  if(String(item["code"]|"")!=r.code)continue;
+  JsonVariantConst actual=item["value"],wanted=expected.as<JsonVariantConst>();
+  bool match=false;
+  if(wanted.is<bool>())match=actual.is<bool>()&&actual.as<bool>()==wanted.as<bool>();
+  else if(wanted.is<const char*>())match=actual.is<const char*>()&&!strcmp(actual.as<const char*>(),wanted.as<const char*>());
+  else match=!actual.is<bool>()&&actual.is<double>()&&wanted.is<double>()&&actual.as<double>()==wanted.as<double>();
+  return match?RuleDeviceState::Match:RuleDeviceState::Different;
+ }
+ state="command_unavailable";return RuleDeviceState::Error;
+}
 bool sendRule(size_t index){
  const Rule&r=rules[index];
  String body="{\"commands\":[{\"code\":\""+String(r.code)+"\",\"value\":"+r.value+"}]}";
  DynamicJsonDocument reply(1024);
  if(!request("POST",String("/v1.0/iot-03/devices/")+r.device+"/commands",body,false,reply)){noteRuleError(index);return false;}
  if(reply["result"]!=true){state="command_rejected";noteRuleError(index);return false;}
- state="confirming";verifyRule=index;verifyAttempts=0;verifyAfter=millis();return true;
+ state="confirming";verifyRule=index;ruleCommandQueued=false;verifyAfter=millis();return true;
 }
 bool confirmRule(size_t index){
- const Rule&r=rules[index];DynamicJsonDocument reply(4096);
- if(!request("GET",String("/v1.0/iot-03/devices/")+r.device+"/status","",false,reply)){noteRuleError(index);return false;}
- DynamicJsonDocument expected(256);deserializeJson(expected,r.value);
- for(JsonObjectConst value:reply["result"].as<JsonArrayConst>()){
-  if(String(value["code"]|"")==r.code){
-   String actual,wanted;serializeJson(value["value"],actual);serializeJson(expected,wanted);
-   if(actual==wanted){acknowledge(runtime[index],millis());state="confirmed";ruleErrors[index].active=false;return true;}
-  }
+ if(readRuleState(index)==RuleDeviceState::Match){
+  if(runtime[index].active)acknowledge(runtime[index],millis());
+  else{runtime[index].hasRun=true;runtime[index].lastRun=millis();}
+  state="confirmed";ruleErrors[index].active=false;return true;
  }
- state="not_confirmed";noteRuleError(index);return false;
+ // A mismatch or temporarily unavailable status is expected while the device executes.
+ // Do not report a device failure until the post-command confirmation window expires.
+ state="confirming";return false;
 }
+void expireRuleConfirmation(uint32_t now){
+ if(verifyRule<0||ruleCommandQueued||uint32_t(now-verifyAfter)<=CONFIRMATION_TIMEOUT_MS)return;
+ size_t index=verifyRule;verifyRule=-1;suspended[index]=true;
+ state="confirmation_timeout";noteRuleError(index);
+}
+
+void serviceRuleConfirmation(){
+ const uint32_t now=millis();expireRuleConfirmation(now);
+ if(verifyRule<0||ruleCommandQueued||!credentials.enabled||!sdReady||!validClock()||WiFi.status()!=WL_CONNECTED||
+    (attempted&&uint32_t(now-lastAttempt)<15000))return;
+ const size_t index=verifyRule;lastAttempt=now;attempted=true;
+ if(accessToken.isEmpty()||time(nullptr)+60>=tokenExpires){ensureToken();return;}
+ if(confirmRule(index)){failures[index]=0;verifyRule=-1;}
+}
+
 bool freshData(){
  return tuyaHasMeasurement&&uint32_t(millis()-tuyaMeasurementMs)<=
    std::min(uint32_t(300),std::max(uint32_t(30),appSettings.registerIntervalSeconds*3))*1000UL;
 }
 void tick(bool registersUpdated=false){
  const uint32_t now=millis();if(!registersUpdated&&uint32_t(now-lastTick)<1000)return;lastTick=now;
- expireDeviceJob();
+ expireDeviceJob();expireRuleConfirmation(now);
  loadRules();maybeInitialCatalogue();
  if(!credentials.enabled&&!testRequested&&!deviceJob.queued){
   for(size_t i=0;i<ruleCount;++i)resetPending(runtime[i]);
@@ -470,12 +502,12 @@ void tick(bool registersUpdated=false){
  if(!credentials.clientId[0]||!credentials.secret[0]){state="credentials_required";return;}
  if(!validClock()||WiFi.status()!=WL_CONNECTED){
   for(size_t i=0;i<ruleCount;++i)resetPending(runtime[i]);
-  verifyRule=-1;state="offline";return;
+  if(ruleCommandQueued)verifyRule=-1;state="offline";return;
  }
  if(uint32_t(now-bootMs)<30000){state="warming_up";return;}
  if(!sdReady){
   for(size_t i=0;i<ruleCount;++i)resetPending(runtime[i]);
-  verifyRule=-1;state="sd_required";return;
+  if(ruleCommandQueued)verifyRule=-1;state="sd_required";return;
  }
  struct tm local;time_t clock=time(nullptr);localtime_r(&clock,&local);
  float values[SENSOR_COUNT]={currentPower.pv,currentPower.load,currentPower.grid,
@@ -488,28 +520,26 @@ void tick(bool registersUpdated=false){
   if(!runtime[i].active){failures[i]=0;suspended[i]=false;}
   if(suspended[i])due[i]=false;
  }
- if(verifyRule>=0&&!runtime[verifyRule].active){verifyRule=-1;state="cancelled";}
+ if(verifyRule>=0&&ruleCommandQueued&&!runtime[verifyRule].active){verifyRule=-1;state="cancelled";}
+ if(!credentials.enabled)verifyRule=-1;
  if(attempted&&uint32_t(now-lastAttempt)<15000)return;
  if(testRequested){
   testRequested=false;lastAttempt=now;attempted=true;accessToken="";tokenExpires=0;
   if(ensureToken())state="connected";return;
  }
- if(!fresh){
+ if(!fresh&&!(verifyRule>=0&&!ruleCommandQueued)){
   if(deviceJob.queued&&verifyRule<0)deviceStep();else state="stale_data";
   return;
  }
  if(state=="stale_data"||state=="offline"||state=="sd_required"||state=="warming_up")state="ready";
  if(verifyRule>=0){
-  if(uint32_t(now-verifyAfter)<15000)return;
-  lastAttempt=now;attempted=true;
+  if(!ruleCommandQueued){serviceRuleConfirmation();return;}
+  const size_t index=verifyRule;lastAttempt=now;attempted=true;
   if(accessToken.isEmpty()||time(nullptr)+60>=tokenExpires){
-   if(!ensureToken()){noteRuleError(verifyRule);if(++verifyAttempts>=3){suspended[verifyRule]=true;verifyRule=-1;state="confirmation_failed";}}
+   if(!ensureToken()&&ruleCommandQueued){noteRuleError(index);if(++failures[index]>=3){suspended[index]=true;verifyRule=-1;}}
    return;
   }
-  if(confirmRule(verifyRule)){failures[verifyRule]=0;verifyRule=-1;return;}
-  if(++verifyAttempts>=3){
-   suspended[verifyRule]=true;verifyRule=-1;state="confirmation_failed";
-  }
+  if(!sendRule(index)&&++failures[index]>=3){suspended[index]=true;verifyRule=-1;state="retry_limit";}
   return;
  }
  for(size_t i=0;i<ruleCount;++i)if(due[i]){
@@ -518,7 +548,14 @@ void tick(bool registersUpdated=false){
    if(!ensureToken()){noteRuleError(i);if(++failures[i]>=3){suspended[i]=true;state="retry_limit";}}
    return;
   }
-  if(!sendRule(i)&&++failures[i]>=3){suspended[i]=true;state="retry_limit";}
+  RuleDeviceState actual=readRuleState(i);
+  if(actual==RuleDeviceState::Match){
+   acknowledge(runtime[i],millis());failures[i]=0;ruleErrors[i].active=false;state="already_set";
+  }else if(actual==RuleDeviceState::Different){
+   verifyRule=i;ruleCommandQueued=true;failures[i]=0;state="command_queued";
+  }else{
+   noteRuleError(i);if(++failures[i]>=3){suspended[i]=true;state="retry_limit";}
+  }
   return;
  }
  if(deviceJob.queued)deviceStep();
@@ -715,8 +752,8 @@ void tuyaRegistersUpdated(){
  TuyaCloud::tick(true);
 }
 void tuyaServiceDevices(){
- // No rule evaluation/commands while waiting for an inverter TCP connection.
- using namespace TuyaCloud;expireDeviceJob();maybeInitialCatalogue();
+ // Confirm accepted commands while waiting; never evaluate rules or send new commands here.
+ using namespace TuyaCloud;expireDeviceJob();serviceRuleConfirmation();maybeInitialCatalogue();
  const uint32_t now=millis();
  if(!deviceJob.queued||verifyRule>=0||!credentials.clientId[0]||!credentials.secret[0]||
    !sdReady||!validClock()||WiFi.status()!=WL_CONNECTED||uint32_t(now-bootMs)<30000||

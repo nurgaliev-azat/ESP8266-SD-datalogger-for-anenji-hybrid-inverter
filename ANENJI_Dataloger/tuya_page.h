@@ -21,6 +21,10 @@ Object.assign(dictionary.en,{saveUid:'Save UID',uidSaved:'UID saved on SD'});
 Object.assign(dictionary.ru,{saveUid:'Сохранить UID',uidSaved:'UID сохранён на SD'});
 Object.assign(dictionary.en,{devicesLive:'Device list updated and saved on SD'});
 Object.assign(dictionary.ru,{devicesLive:'Список устройств обновлён и сохранён на SD'});
+Object.assign(dictionary.en,{already_set:'Device is already in the required state',command_queued:'State differs; command queued',confirmation_timeout:'Command execution was not confirmed within 60 seconds',command_unavailable:'The command is missing from cloud device status'});
+Object.assign(dictionary.ru,{already_set:'Устройство уже в требуемом состоянии',command_queued:'Состояние отличается; команда в очереди',confirmation_timeout:'Исполнение команды не подтверждено за 60 секунд',command_unavailable:'Команда отсутствует в состоянии устройства в облаке'});
+dictionary.en.rulesHelp+=' Before each trigger, the cloud state is checked. A command is sent only when needed, then confirmation is awaited for up to 60 seconds. Repeat = 0 means once per condition activation.';
+dictionary.ru.rulesHelp+=' При каждом срабатывании сначала проверяется состояние в облаке. Команда отправляется только при несовпадении, затем ожидается подтверждение до 60 секунд. Повтор = 0 — один раз за активацию условия.';
 const t=k=>dictionary[lang][k]||k;
 function translate(){document.documentElement.lang=lang;document.title=t('title');document.querySelectorAll('[data-t]').forEach(e=>e.textContent=t(e.dataset.t));
  const names=lang==='ru'?['Китай','Запад США','Восток США','Центральная Европа','Западная Европа','Индия','Сингапур']:['China','Western America','Eastern America','Central Europe','Western Europe','India','Singapore'];Array.from($('region').options).forEach((o,i)=>o.textContent=names[i]);}

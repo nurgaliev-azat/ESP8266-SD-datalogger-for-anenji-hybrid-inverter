@@ -39,5 +39,8 @@ const settle=()=>new Promise(r=>setImmediate(r));const $=id=>document.getElement
  vm.runInContext('lang="ru";showStatus({ruleErrors:[{name:"Бойлер <script>",device:"relay1",code:"command_rejected",paused:true}]})',context);
  assert($('ruleAlerts').textContent.includes('Бойлер <script>'));assert.equal($('ruleAlerts').querySelectorAll('script').length,0);assert($('ruleAlerts').textContent.includes('Команда')||$('ruleAlerts').textContent.includes('команд'));assert($('ruleAlerts').textContent.includes('Попытки остановлены'));
  vm.runInContext('showStatus({ruleErrors:[]})',context);assert.equal($('ruleAlerts').textContent,'');
+ vm.runInContext('lang="ru";showStatus({status:"already_set",ruleErrors:[]})',context);assert($('status').textContent.includes('Устройство уже'));
+ vm.runInContext('showStatus({ruleErrors:[{name:"Бойлер",device:"relay1",code:"confirmation_timeout",paused:true}]})',context);assert($('ruleAlerts').textContent.includes('60 секунд'));
+ vm.runInContext('lang="en";showStatus({ruleErrors:[{name:"Boiler",device:"relay1",code:"confirmation_timeout"}]})',context);assert($('ruleAlerts').textContent.includes('60 seconds'));
  console.log('PASS: function loading, Boolean/Integer/Enum values, range steps, unsupported types, device changes and read-only requests');
 })().catch(e=>{console.error(e);process.exit(1)});

@@ -58,7 +58,7 @@ size_t serializeForTest(Source&& source,Target& target,Args&&...args){
 #include "tuya_rules.h"
 using namespace TuyaRules;
 Rule rules[MAX_RULES];Runtime runtime[MAX_RULES];bool suspended[MAX_RULES]={};size_t ruleCount=1;
-int verifyRule=-1;uint8_t verifyAttempts=0;uint32_t verifyAfter=0;
+int verifyRule=-1;bool ruleCommandQueued=false;uint32_t verifyAfter=0;
 std::map<std::string,std::string> files;
 struct File {
  std::string data;size_t pos=0;bool opened=false;
@@ -94,12 +94,12 @@ struct Server {
  Server& client(){return *this;}void stop(){stopped=true;}
 } anenjiWebServer;
 void jsonReply(int status,const char* error){anenjiWebServer.code=status;anenjiWebServer.body=error;}
-bool failWrite=false,failCloud=false,rejectCommand=false,wrongStatus=false,emptyCloud=false;int cloudRequests=0;
+bool failWrite=false,failCloud=false,rejectCommand=false,wrongStatus=false,emptyCloud=false;int cloudRequests=0,statusGets=0,commandPosts=0;String statusOverride;
 bool writeFile(const char* path,const String& text){if(failWrite)return false;files[path]=text;return true;}
 bool request(const char*,const String& path,const String&,bool,DynamicJsonDocument& reply,JsonVariantConst filter=JsonVariantConst(),size_t=4096){
  ++cloudRequests;if(failCloud){state="api_error";return false;}
- if(path.find("/commands")!=std::string::npos)return !deserializeJson(reply,rejectCommand?"{\"success\":true,\"result\":false}":"{\"success\":true,\"result\":true}");
- if(path.find("/status")!=std::string::npos)return !deserializeJson(reply,wrongStatus?"{\"success\":true,\"result\":[{\"code\":\"switch_1\",\"value\":false}]}":"{\"success\":true,\"result\":[{\"code\":\"switch_1\",\"value\":true}]}");
+ if(path.find("/commands")!=std::string::npos){++commandPosts;return !deserializeJson(reply,rejectCommand?"{\"success\":true,\"result\":false}":"{\"success\":true,\"result\":true}");}
+ if(path.find("/status")!=std::string::npos){++statusGets;if(!statusOverride.isEmpty())return !deserializeJson(reply,statusOverride.c_str());return !deserializeJson(reply,wrongStatus?"{\"success\":true,\"result\":[{\"code\":\"switch_1\",\"value\":false}]}":"{\"success\":true,\"result\":[{\"code\":\"switch_1\",\"value\":true}]}");}
  if(emptyCloud)return !deserializeJson(reply,"{\"success\":true,\"result\":{\"has_more\":false,\"last_row_key\":\"\",\"list\":[]}}");
  const char* first=R"({"success":true,"result":{"has_more":true,"last_row_key":"next","list":[{"id":"d1","name":"Реле \"One\"","local_key":"SECRET"},{"id":"d2","name":"Two"},{"id":"d3","name":"Three"}]}})";
  const char* last=R"({"success":true,"result":{"has_more":false,"last_row_key":"","list":[{"id":"d4","name":"Four"}]}})";
@@ -110,10 +110,10 @@ job_start = source.index('struct DeviceJob {')
 job_end = source.index('} deviceJob;',job_start)+len('} deviceJob;')
 error_start = source.index('struct RuleError {')
 error_end = source.index('int verifyRule=', error_start)
-functions = source[error_start:error_end] + '\n' + '\n'.join(extract(name) for name in [
+functions = source[error_start:error_end] + '\nenum class RuleDeviceState { Match, Different, Error };\n' + '\n'.join(extract(name) for name in [
  'void expireDeviceJob()', 'bool loadDeviceProfile(', 'bool persistAccountUid(', 'void getAccountUid()', 'bool loadCatalogue(',
  'String cataloguePagePath(', 'bool readCataloguePage(', 'bool beginCatalogue(',
- 'void maybeInitialCatalogue()', 'void deviceStep()', 'void getDevices()', 'bool sendRule(', 'bool confirmRule(', 'bool freshData()', 'void tick(', 'void getRuleAlerts()'])
+ 'void maybeInitialCatalogue()', 'void deviceStep()', 'void getDevices()', 'RuleDeviceState readRuleState(', 'bool sendRule(', 'bool confirmRule(', 'void expireRuleConfirmation(', 'void serviceRuleConfirmation()', 'bool freshData()', 'void tick(', 'void getRuleAlerts()'])
 post = r'''
 int main(){
  // UID is saved before any cloud request and restored independently of catalogue JSON.
@@ -157,20 +157,55 @@ int main(){
  strlcpy(rules[0].code,"switch_1",sizeof(rules[0].code));strlcpy(rules[0].value,"true",sizeof(rules[0].value));
  failCloud=true;assert(!sendRule(0));assert(ruleErrors[0].active&&std::string(ruleErrors[0].code)=="api_error");failCloud=false;
  state="ready";getRuleAlerts();assert(!deserializeJson(response,anenjiWebServer.body));assert(response[0]["name"]=="Pump"&&response[0]["device"]=="d4"&&response[0]["code"]=="api_error");
- assert(sendRule(0));assert(ruleErrors[0].active);wrongStatus=true;assert(!confirmRule(0));assert(std::string(ruleErrors[0].code)=="not_confirmed");
+ assert(sendRule(0));assert(ruleErrors[0].active);wrongStatus=true;assert(!confirmRule(0));assert(std::string(ruleErrors[0].code)=="api_error");assert(state=="confirming");
  wrongStatus=false;assert(confirmRule(0));assert(!ruleErrors[0].active);getRuleAlerts();assert(anenjiWebServer.body=="[]");
  rejectCommand=true;assert(!sendRule(0));assert(std::string(ruleErrors[0].code)=="command_rejected");suspended[0]=true;getRuleAlerts();assert(!deserializeJson(response,anenjiWebServer.body));assert(response[0]["paused"]==true);
  // Timeout exposes an error; it never publishes a partial catalogue.
  assert(beginCatalogue("uid"));nowMs+=120001;expireDeviceJob();assert(!deviceJob.queued&&deviceJob.error=="device_timeout");
+ // Compare values semantically while preserving boolean/string types.
+ statusOverride=R"({"result":[{"code":"switch_1","value":1}]})";strlcpy(rules[0].value,"1.0",sizeof(rules[0].value));
+ assert(readRuleState(0)==RuleDeviceState::Match);
+ strlcpy(rules[0].value,"true",sizeof(rules[0].value));assert(readRuleState(0)==RuleDeviceState::Different);
+ statusOverride=R"({"result":[{"code":"switch_1","value":"eco"}]})";strlcpy(rules[0].value,"\"eco\"",sizeof(rules[0].value));assert(readRuleState(0)==RuleDeviceState::Match);
+ statusOverride=R"({"result":[{"code":"other","value":true}]})";assert(readRuleState(0)==RuleDeviceState::Error&&state=="command_unavailable");statusOverride="";
  // Fresh registers force immediate evaluation even inside the one-second background throttle.
  credentials.enabled=true;autoCatalogueChecked=true;deviceJob.queued=false;verifyRule=-1;attempted=false;
  rules[0]=Rule();runtime[0]=Runtime();suspended[0]=false;failures[0]=0;rules[0].enabled=true;rules[0].conditionCount=1;
  rules[0].conditions[0]=Condition(0,0,10,0);strlcpy(rules[0].device,"d4",sizeof(rules[0].device));strlcpy(rules[0].code,"switch_1",sizeof(rules[0].code));strlcpy(rules[0].value,"true",sizeof(rules[0].value));
  rejectCommand=false;wrongStatus=false;currentPower.pv=20;nowMs=60001;tuyaMeasurementMs=nowMs;lastTick=60000;
  int before=cloudRequests;tick();assert(cloudRequests==before&&!runtime[0].active);
- tick(true);assert(runtime[0].active&&verifyRule==0&&cloudRequests==before+1);
- // Timers/cooldown remain part of rule semantics; stale measurements never activate it.
- verifyRule=-1;runtime[0]=Runtime();nowMs=150002;before=cloudRequests;tick(true);assert(!runtime[0].active&&cloudRequests==before);
+ tick(true);assert(runtime[0].active&&runtime[0].fired&&verifyRule==-1&&cloudRequests==before+1);
+ // Manual/third-party changes are normal at the next trigger: GET before POST.
+ ruleErrors[0].active=false;rules[0].repeatSeconds=60;wrongStatus=true;
+ int postsBefore=commandPosts,getsBefore=statusGets;
+ nowMs=120001;tuyaMeasurementMs=nowMs;tick(true);
+ assert(verifyRule==0&&ruleCommandQueued&&!ruleErrors[0].active&&commandPosts==postsBefore&&statusGets==getsBefore+1);
+ nowMs=135001;tuyaMeasurementMs=nowMs;tick(true);
+ assert(verifyRule==0&&!ruleCommandQueued&&commandPosts==postsBefore+1&&verifyAfter==nowMs&&!ruleErrors[0].active);
+ nowMs=150001;tuyaMeasurementMs=nowMs;tick(true);assert(verifyRule==0&&!ruleErrors[0].active);
+ wrongStatus=false;nowMs=165001;tuyaMeasurementMs=nowMs;tick(true);assert(verifyRule==-1&&!ruleErrors[0].active);
+ // Another external change is corrected on the following trigger, with no false alarm.
+ wrongStatus=true;nowMs=225001;tuyaMeasurementMs=nowMs;tick(true);assert(ruleCommandQueued&&!ruleErrors[0].active);
+ nowMs=240001;tuyaMeasurementMs=nowMs;tick(true);assert(!ruleCommandQueued&&verifyRule==0);
+ for(uint32_t t:{255001U,270001U,285001U}){nowMs=t;tuyaMeasurementMs=t;tick(true);assert(!ruleErrors[0].active&&verifyRule==0);}
+ nowMs=300002;tuyaMeasurementMs=nowMs;tick(true);
+ assert(verifyRule==-1&&suspended[0]&&ruleErrors[0].active&&std::string(ruleErrors[0].code)=="confirmation_timeout");
+ assert(commandPosts==postsBefore+2); // no blind retransmission during confirmation
+ // A condition that fails after pre-check cancels an unsent command.
+ suspended[0]=false;runtime[0]=Runtime();attempted=false;ruleErrors[0].active=false;
+ nowMs=330001;tuyaMeasurementMs=nowMs;tick(true);assert(ruleCommandQueued);
+ currentPower.pv=0;nowMs=345001;tuyaMeasurementMs=nowMs;tick(true);assert(verifyRule==-1&&commandPosts==postsBefore+2);
+ // An accepted command is still verified if the original condition subsequently fails.
+ currentPower.pv=20;nowMs=360001;tuyaMeasurementMs=nowMs;tick(true);assert(ruleCommandQueued);
+ nowMs=375001;tuyaMeasurementMs=nowMs;tick(true);assert(verifyRule==0&&!ruleCommandQueued);
+ currentPower.pv=0;wrongStatus=false;nowMs=390001;tuyaMeasurementMs=nowMs;tick(true);
+ assert(verifyRule==-1&&!ruleErrors[0].active&&!runtime[0].active&&!runtime[0].fired);
+ // Confirmation remains serviceable while waiting for the inverter (no rule evaluation).
+ runtime[0]=Runtime();currentPower.pv=20;wrongStatus=true;nowMs=420001;tuyaMeasurementMs=nowMs;tick(true);
+ nowMs=435001;tuyaMeasurementMs=nowMs;tick(true);assert(verifyRule==0&&!ruleCommandQueued);
+ wrongStatus=false;nowMs=450001;tuyaMeasurementMs=0;serviceRuleConfirmation();assert(verifyRule==-1&&!ruleErrors[0].active);
+ // Stale measurements never activate a new command.
+ verifyRule=-1;runtime[0]=Runtime();nowMs=490002;before=cloudRequests;tick(true);assert(!runtime[0].active&&cloudRequests==before);
  credentials.enabled=false;
  emptyCloud=true;assert(beginCatalogue("uid"));deviceStep();getDevices();assert(!deserializeJson(response,anenjiWebServer.body));assert(response["page"]["devices"].is<JsonArray>()&&response["page"]["devices"].size()==0);
 }
@@ -184,4 +219,4 @@ with tempfile.TemporaryDirectory() as directory:
     subprocess.run([str(binary)],check=True)
     subprocess.run(['g++','-std=c++17','-DTEST_REPLACE_STRING','-I'+str(tmp),'-I'+sys.argv[1],'-I'+str(root/'ANENJI_Dataloger'),str(cpp),'-o',str(binary)],check=True)
     subprocess.run([str(binary)],check=True)
-print('PASS: first auto-load, all pages, secret filtering, SD restore, no automatic reload, atomic refresh, cloud/SD failures, timeout and scenario failure/recovery alerts; append/replace String serialization, immediate register evaluation and stale data rejection')
+print('PASS: first auto-load, all pages, secret filtering, SD restore, no automatic reload, atomic refresh, cloud/SD failures, timeout and scenario failure/recovery alerts; append/replace String serialization, immediate register evaluation, pre-check/conditional POST, external changes, post-command timeout and recovery')
