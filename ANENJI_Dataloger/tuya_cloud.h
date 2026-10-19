@@ -459,8 +459,8 @@ bool freshData(){
  return tuyaHasMeasurement&&uint32_t(millis()-tuyaMeasurementMs)<=
    std::min(uint32_t(300),std::max(uint32_t(30),appSettings.registerIntervalSeconds*3))*1000UL;
 }
-void tick(){
- const uint32_t now=millis();if(uint32_t(now-lastTick)<1000)return;lastTick=now;
+void tick(bool registersUpdated=false){
+ const uint32_t now=millis();if(!registersUpdated&&uint32_t(now-lastTick)<1000)return;lastTick=now;
  expireDeviceJob();
  loadRules();maybeInitialCatalogue();
  if(!credentials.enabled&&!testRequested&&!deviceJob.queued){
@@ -709,6 +709,11 @@ void saveCA(){
 #include "tuya_page.h"
 void tuyaBegin(){TuyaCloud::bootMs=millis();TuyaCloud::loadCredentials();TuyaCloud::loadRules();}
 void tuyaLoop(){TuyaCloud::tick();}
+void tuyaRegistersUpdated(){
+ if(!tuyaMeasurementPending)return;
+ tuyaMeasurementPending=false;
+ TuyaCloud::tick(true);
+}
 void tuyaServiceDevices(){
  // No rule evaluation/commands while waiting for an inverter TCP connection.
  using namespace TuyaCloud;expireDeviceJob();maybeInitialCatalogue();

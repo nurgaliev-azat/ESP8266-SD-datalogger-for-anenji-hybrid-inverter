@@ -71,8 +71,14 @@ struct File {
 constexpr int FILE_READ=0,WL_CONNECTED=3;
 struct {File open(const char* path,int){auto i=files.find(path);return i==files.end()?File{}:File{i->second,0,true};}bool exists(const char* path){return files.count(path)>0;}} SD;
 struct {int status(){return WL_CONNECTED;}} WiFi;
-struct {char clientId[33]="client",secret[65]="secret";uint8_t region=3;} credentials;
-bool sdReady=true,attempted=false,autoCatalogueChecked=false;uint32_t bootMs=0,lastAttempt=0,nowMs=60000;
+struct {char clientId[33]="client",secret[65]="secret";uint8_t region=3;bool enabled=false;} credentials;
+bool sdReady=true,attempted=false,autoCatalogueChecked=false,testRequested=false;
+uint32_t bootMs=0,lastAttempt=0,lastTick=0,nowMs=60000,tuyaMeasurementMs=60000;bool tuyaHasMeasurement=true;
+uint8_t failures[MAX_RULES]={};
+struct {uint32_t registerIntervalSeconds=30;} appSettings;
+struct {float pv=0,load=0,grid=0,batteryCharge=0,batteryDischarge=0;} currentPower;
+int currentBatteryPercent=50;float currentBatteryVoltage=50,currentGridVoltage=230,currentPvVoltage=300,currentLoadVoltage=230;
+void loadRules(){}
 uint32_t millis(){return nowMs;}
 bool validClock(){return true;}
 String accessToken="token",state="ready";time_t tokenExpires=time(nullptr)+3600;
@@ -107,7 +113,7 @@ error_end = source.index('int verifyRule=', error_start)
 functions = source[error_start:error_end] + '\n' + '\n'.join(extract(name) for name in [
  'void expireDeviceJob()', 'bool loadDeviceProfile(', 'bool persistAccountUid(', 'void getAccountUid()', 'bool loadCatalogue(',
  'String cataloguePagePath(', 'bool readCataloguePage(', 'bool beginCatalogue(',
- 'void maybeInitialCatalogue()', 'void deviceStep()', 'void getDevices()', 'bool sendRule(', 'bool confirmRule(', 'void getRuleAlerts()'])
+ 'void maybeInitialCatalogue()', 'void deviceStep()', 'void getDevices()', 'bool sendRule(', 'bool confirmRule(', 'bool freshData()', 'void tick(', 'void getRuleAlerts()'])
 post = r'''
 int main(){
  // UID is saved before any cloud request and restored independently of catalogue JSON.
@@ -156,6 +162,16 @@ int main(){
  rejectCommand=true;assert(!sendRule(0));assert(std::string(ruleErrors[0].code)=="command_rejected");suspended[0]=true;getRuleAlerts();assert(!deserializeJson(response,anenjiWebServer.body));assert(response[0]["paused"]==true);
  // Timeout exposes an error; it never publishes a partial catalogue.
  assert(beginCatalogue("uid"));nowMs+=120001;expireDeviceJob();assert(!deviceJob.queued&&deviceJob.error=="device_timeout");
+ // Fresh registers force immediate evaluation even inside the one-second background throttle.
+ credentials.enabled=true;autoCatalogueChecked=true;deviceJob.queued=false;verifyRule=-1;attempted=false;
+ rules[0]=Rule();runtime[0]=Runtime();suspended[0]=false;failures[0]=0;rules[0].enabled=true;rules[0].conditionCount=1;
+ rules[0].conditions[0]=Condition(0,0,10,0);strlcpy(rules[0].device,"d4",sizeof(rules[0].device));strlcpy(rules[0].code,"switch_1",sizeof(rules[0].code));strlcpy(rules[0].value,"true",sizeof(rules[0].value));
+ rejectCommand=false;wrongStatus=false;currentPower.pv=20;nowMs=60001;tuyaMeasurementMs=nowMs;lastTick=60000;
+ int before=cloudRequests;tick();assert(cloudRequests==before&&!runtime[0].active);
+ tick(true);assert(runtime[0].active&&verifyRule==0&&cloudRequests==before+1);
+ // Timers/cooldown remain part of rule semantics; stale measurements never activate it.
+ verifyRule=-1;runtime[0]=Runtime();nowMs=150002;before=cloudRequests;tick(true);assert(!runtime[0].active&&cloudRequests==before);
+ credentials.enabled=false;
  emptyCloud=true;assert(beginCatalogue("uid"));deviceStep();getDevices();assert(!deserializeJson(response,anenjiWebServer.body));assert(response["page"]["devices"].is<JsonArray>()&&response["page"]["devices"].size()==0);
 }
 '''
@@ -168,4 +184,4 @@ with tempfile.TemporaryDirectory() as directory:
     subprocess.run([str(binary)],check=True)
     subprocess.run(['g++','-std=c++17','-DTEST_REPLACE_STRING','-I'+str(tmp),'-I'+sys.argv[1],'-I'+str(root/'ANENJI_Dataloger'),str(cpp),'-o',str(binary)],check=True)
     subprocess.run([str(binary)],check=True)
-print('PASS: first auto-load, all pages, secret filtering, SD restore, no automatic reload, atomic refresh, cloud/SD failures, timeout and scenario failure/recovery alerts; append/replace String serialization')
+print('PASS: first auto-load, all pages, secret filtering, SD restore, no automatic reload, atomic refresh, cloud/SD failures, timeout and scenario failure/recovery alerts; append/replace String serialization, immediate register evaluation and stale data rejection')

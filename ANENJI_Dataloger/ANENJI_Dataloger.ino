@@ -99,10 +99,12 @@ bool saveSettings(const WebSettings& settings);
 bool saveLanguage(const String& language);
 void tuyaBegin();
 void tuyaLoop();
+void tuyaRegistersUpdated();
 void tuyaRegisterWeb();
 void tuyaServiceDevices();
 uint32_t tuyaMeasurementMs=0;
 bool tuyaHasMeasurement=false;
+bool tuyaMeasurementPending=false;
 
 uint16_t crc16Modbus(const uint8_t* data,size_t length){
   uint16_t crc=0xFFFF;
@@ -907,6 +909,7 @@ void processPowerRegisters(uint16_t start,uint16_t count,
   modeRead=true;
   tuyaMeasurementMs=millis();
   tuyaHasMeasurement=true;
+  tuyaMeasurementPending=true;
   currentStatus="Data updated";
   currentUpdateTime=currentDateTimeString();
 }
@@ -1316,6 +1319,8 @@ void loop(){
     for(size_t i=0;i<READ_RANGE_COUNT;++i){
       readModbusRange(READ_RANGES[i].start,
                       READ_RANGES[i].count);
+      // Dispatch the new snapshot before web requests or history maintenance.
+      if(i+1==READ_RANGE_COUNT)tuyaRegistersUpdated();
       handleWebServer();
       delay(200);
     }
