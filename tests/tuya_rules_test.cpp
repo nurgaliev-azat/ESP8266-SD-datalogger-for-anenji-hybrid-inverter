@@ -14,9 +14,17 @@ int main(){
  r.holdSeconds=r.delaySeconds=0;r.repeatSeconds=120;Runtime periodic;assert(update(r,periodic,v,true,true,0,0,1000));acknowledge(periodic,1000);assert(!update(r,periodic,v,true,true,0,0,120999));assert(update(r,periodic,v,true,true,0,0,121000));
  v[0]=NAN;Condition c;assert(!compare(c,v[0],true));
  Rule pair[2];Runtime rt[2];bool due[2];
- for(int i=0;i<2;++i){pair[i].enabled=true;pair[i].conditionCount=1;strcpy(pair[i].device,"relay");strcpy(pair[i].code,"switch_1");pair[i].conditions[0]=Condition(0,i,100,0);}
+ for(int i=0;i<2;++i){pair[i].cooldownSeconds=60;pair[i].enabled=true;pair[i].conditionCount=1;strcpy(pair[i].device,"relay");strcpy(pair[i].code,"switch_1");pair[i].conditions[0]=Condition(0,i,100,0);}
  v[0]=100;evaluate(pair,rt,2,v,true,true,0,0,1000,due);assert(due[0]&&!due[1]);
  acknowledge(rt[0],1000);v[0]=90;evaluate(pair,rt,2,v,true,true,0,0,2000,due);assert(!due[1]);
  evaluate(pair,rt,2,v,true,true,0,0,61000,due);assert(due[1]);
  evaluate(pair,rt,2,v,false,true,0,0,62000,due);assert(!due[0]&&!due[1]&&!rt[1].timing);
+ Rule immediate;assert(immediate.cooldownSeconds==0);immediate.enabled=true;immediate.conditionCount=1;
+ immediate.conditions[0]=Condition(0,0,100,10);Runtime quick;v[0]=110;
+ assert(update(immediate,quick,v,true,true,0,0,1000));acknowledge(quick,1000);
+ v[0]=89;assert(!update(immediate,quick,v,true,true,0,0,1001));v[0]=110;
+ assert(update(immediate,quick,v,true,true,0,0,1002)); // no hidden 60s pause after a reset
+ pair[1].cooldownSeconds=0;rt[0]=Runtime();rt[1]=Runtime();v[0]=100;
+ evaluate(pair,rt,2,v,true,true,0,0,1000,due);acknowledge(rt[0],1000);v[0]=90;
+ evaluate(pair,rt,2,v,true,true,0,0,1001,due);assert(due[1]); // opposite action can run without cross-rule cooldown
 }

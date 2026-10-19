@@ -151,7 +151,7 @@ bool parseRules(JsonVariantConst input,Rule*out,size_t&count){
   if(!integer(o["holdSeconds"],0,604800,n))return false;r.holdSeconds=n;
   if(!integer(o["delaySeconds"],0,604800,n))return false;r.delaySeconds=n;
   if(r.holdSeconds+r.delaySeconds>604800)return false;
-  if(!integer(o["cooldownSeconds"],60,604800,n))return false;r.cooldownSeconds=n;
+  if(!integer(o["cooldownSeconds"],0,604800,n))return false;r.cooldownSeconds=n;
   if(!integer(o["repeatSeconds"],0,604800,n)||(n&&n<60))return false;r.repeatSeconds=n;
   if(r.expression[0]){out[count++]=r;continue;}
   if(!o["any"].is<bool>()||!o["conditions"].is<JsonArrayConst>())return false;

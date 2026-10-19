@@ -15,7 +15,7 @@ const context={document,console,JSON,Array,Number,String,Object,Error,Promise,Te
 const $=id=>document.getElementById(id);const settle=()=>new Promise(r=>setImmediate(r));
 (async()=>{
  await settle();assert.equal(document.documentElement.lang,'ru');assert.equal($('client').value,'test-client');
- $('add').onclick();assert.equal(document.querySelectorAll('.rule').length,1);assert.equal(document.querySelector('[data-field="enabled"]').checked,false);
+ $('add').onclick();assert.equal(document.querySelectorAll('.rule').length,1);assert.equal(document.querySelector('[data-field="enabled"]').checked,false);assert.equal(document.querySelector('[data-field="cooldownSeconds"]').value,'0');assert.equal(document.querySelector('[data-field="cooldownSeconds"]').getAttribute('min'),'0');
  document.querySelector('[data-field="action"]').value='SET("test-device", "switch_1", true)';
  document.querySelector('[data-field="startMinute"]').value='22:00';document.querySelector('[data-field="endMinute"]').value='06:00';
  const expression=document.querySelector('[data-field="expression"]');
@@ -25,7 +25,7 @@ const $=id=>document.getElementById(id);const settle=()=>new Promise(r=>setImmed
  expression.value='pvPower >= 2000 HYST 200 AND NOT (batteryPercent < 95 XOR gridPower > 100)';
  expression.dispatchEvent(new window.Event('input'));
  assert(!document.querySelector('.syntax').className.includes('bad'));
- $('rulesForm').onsubmit({preventDefault(){}});await settle();assert(savedRules);assert.equal(savedRules.rules[0].startMinute,1320);assert.equal(savedRules.rules[0].endMinute,360);assert(savedRules.rules[0].expression.includes('XOR'));assert.equal(savedRules.rules[0].action,'SET("test-device", "switch_1", true)');
+ $('rulesForm').onsubmit({preventDefault(){}});await settle();assert(savedRules);assert.equal(savedRules.rules[0].cooldownSeconds,0);assert.equal(savedRules.rules[0].startMinute,1320);assert.equal(savedRules.rules[0].endMinute,360);assert(savedRules.rules[0].expression.includes('XOR'));assert.equal(savedRules.rules[0].action,'SET("test-device", "switch_1", true)');
  $('secret').value='test-secret';$('configForm').onsubmit({preventDefault(){}});await settle();assert.equal(config.secret,'test-secret');assert.equal($('secret').value,'');
  $('test').onclick();await settle();assert.equal(testCalls,1);
  vm.runInContext("lang='en';translate();renderRules()",context);assert.equal(document.documentElement.lang,'en');assert.equal($('add').textContent,'Add scenario');

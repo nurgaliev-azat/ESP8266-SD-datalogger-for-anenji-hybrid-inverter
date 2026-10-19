@@ -19,7 +19,7 @@ struct Rule {
  bool enabled=false,any=false;
  uint8_t conditionCount=0,weekdays=127;
  uint16_t startMinute=0,endMinute=0;
- uint32_t holdSeconds=0,delaySeconds=0,cooldownSeconds=60,repeatSeconds=0;
+ uint32_t holdSeconds=0,delaySeconds=0,cooldownSeconds=0,repeatSeconds=0;
  Condition conditions[MAX_CONDITIONS];
 };
 struct Runtime {

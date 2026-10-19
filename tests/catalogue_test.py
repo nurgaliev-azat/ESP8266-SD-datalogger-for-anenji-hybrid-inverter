@@ -31,6 +31,7 @@ class String:public std::string {public:
  using std::string::string;
  String(const std::string& s):std::string(s){}
  bool isEmpty()const{return empty();}
+ String substring(size_t start,size_t end)const{return String(substr(start,end-start));}
  void remove(size_t index){erase(index);}
  size_t write(uint8_t c){push_back(c);return 1;}
  size_t write(const uint8_t* p,size_t n){append(reinterpret_cast<const char*>(p),n);return n;}
@@ -42,6 +43,7 @@ pre = r'''
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <cassert>
+#include <cctype>
 #include <map>
 #include <memory>
 #include <ctime>
@@ -111,11 +113,17 @@ job_end = source.index('} deviceJob;',job_start)+len('} deviceJob;')
 error_start = source.index('struct RuleError {')
 error_end = source.index('int verifyRule=', error_start)
 functions = source[error_start:error_end] + '\nenum class RuleDeviceState { Match, Different, Error };\n' + '\n'.join(extract(name) for name in [
- 'void expireDeviceJob()', 'bool loadDeviceProfile(', 'bool persistAccountUid(', 'void getAccountUid()', 'bool loadCatalogue(',
+ 'bool safeIdentifier(', 'bool integer(', 'bool parseRules(', 'void expireDeviceJob()', 'bool loadDeviceProfile(', 'bool persistAccountUid(', 'void getAccountUid()', 'bool loadCatalogue(',
  'String cataloguePagePath(', 'bool readCataloguePage(', 'bool beginCatalogue(',
  'void maybeInitialCatalogue()', 'void deviceStep()', 'void getDevices()', 'RuleDeviceState readRuleState(', 'bool sendRule(', 'bool confirmRule(', 'void expireRuleConfirmation(', 'void serviceRuleConfirmation()', 'bool freshData()', 'void tick(', 'void getRuleAlerts()'])
 post = r'''
 int main(){
+ // Zero and short cooldowns round-trip through the actual server parser; invalid bounds still fail.
+ DynamicJsonDocument inputRules(2048);assert(!deserializeJson(inputRules,R"RULE([{"name":"Timing","enabled":false,"expression":"true","action":"SET(\"dev\", \"switch_1\", true)","weekdays":127,"startMinute":0,"endMinute":0,"holdSeconds":0,"delaySeconds":0,"cooldownSeconds":0,"repeatSeconds":0}])RULE"));
+ Rule parsed[MAX_RULES];size_t parsedCount=0;
+ for(unsigned cooldown:{0U,1U,59U,60U,300U,604800U}){inputRules[0]["cooldownSeconds"]=cooldown;assert(parseRules(inputRules.as<JsonVariantConst>(),parsed,parsedCount)&&parsedCount==1&&parsed[0].cooldownSeconds==cooldown);}
+ inputRules[0]["cooldownSeconds"]=-1;assert(!parseRules(inputRules.as<JsonVariantConst>(),parsed,parsedCount));
+ inputRules[0]["cooldownSeconds"]=604801;assert(!parseRules(inputRules.as<JsonVariantConst>(),parsed,parsedCount));
  // UID is saved before any cloud request and restored independently of catalogue JSON.
  DynamicJsonDocument account(512);failCloud=true;credentials.secret[0]=0;
  assert(persistAccountUid("saved_uid"));assert(cloudRequests==0);assert(loadDeviceProfile(account,false));assert(account["uid"]=="saved_uid"&&account["autoAttempted"]==false);
